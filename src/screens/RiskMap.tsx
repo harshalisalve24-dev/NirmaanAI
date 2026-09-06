@@ -1,6 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
 import type { Screen } from "../App";
 import type { Project } from "../types/project";
+import { getProjectsCached } from "../services/projectService";
+import { predictProjectsRiskBatch, type RiskPredictionResult } from "../services/apiService";
 
 // MapMarker: a Project subset with SVG pixel coordinates for the India outline map.
 // x and y positions are hardcoded per-marker (not stored in Firestore).
@@ -9,6 +11,8 @@ type MapMarker = Pick<Project, "id" | "name" | "sector" | "agency"> & {
   risk: NonNullable<Project["risk"]>;
   physicalProgress: Project["physicalProgress"];
   progressGap: Project["progressGap"];
+  riskScore?: number;
+  predictedDelayMonths?: number;
   x: number;
   y: number;
 };
@@ -57,17 +61,45 @@ const riskOrder = ["Critical", "High", "Medium", "Low"];
 
 
 export default function RiskMap({ navigate }: { navigate: (s: Screen, project?: string) => void }) {
+  const [predictions, setPredictions] = useState<Map<string, RiskPredictionResult>>(new Map());
   const [selected, setSelected] = useState<MapMarker | null>(null);
   const [filter, setFilter] = useState("All");
   const [hoveredId, setHoveredId] = useState<string | null>(null);
 
-  const visibleMarkers = filter === "All" ? markers : markers.filter((m) => m.risk === filter);
+  useEffect(() => {
+    getProjectsCached()
+      .then(async (all) => {
+        const markerProjects = all.filter((p) => markers.some((m) => m.id === p.id));
+        try {
+          const predMap = await predictProjectsRiskBatch(markerProjects);
+          setPredictions(predMap);
+        } catch (err) {
+          console.warn("[RiskMap] batch prediction error:", err);
+        }
+      })
+      .catch((err) => console.error("[RiskMap] load projects failed:", err));
+  }, []);
+
+  const dynamicMarkers = useMemo(() => {
+    return markers.map((m) => {
+      const pred = predictions.get(m.id);
+      if (!pred) return m;
+      return {
+        ...m,
+        risk: (pred.risk_level as MapMarker["risk"]) || m.risk,
+        riskScore: pred.risk_score,
+        predictedDelayMonths: pred.predicted_delay_months,
+      };
+    });
+  }, [predictions]);
+
+  const visibleMarkers = filter === "All" ? dynamicMarkers : dynamicMarkers.filter((m) => m.risk === filter);
 
   const counts = {
-    Critical: markers.filter((m) => m.risk === "Critical").length,
-    High: markers.filter((m) => m.risk === "High").length,
-    Medium: markers.filter((m) => m.risk === "Medium").length,
-    Low: markers.filter((m) => m.risk === "Low").length,
+    Critical: dynamicMarkers.filter((m) => m.risk === "Critical").length,
+    High: dynamicMarkers.filter((m) => m.risk === "High").length,
+    Medium: dynamicMarkers.filter((m) => m.risk === "Medium").length,
+    Low: dynamicMarkers.filter((m) => m.risk === "Low").length,
   };
 
   return (

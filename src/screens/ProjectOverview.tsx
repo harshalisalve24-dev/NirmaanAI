@@ -2,6 +2,14 @@ import { useState, useEffect } from "react";
 import type { Screen } from "../App";
 import type { Project } from "../types/project";
 import { getProject } from "../services/projectService";
+import { predictProjectRisk, type RiskPredictionResult } from "../services/apiService";
+import {
+  deriveCurrentHealth,
+  calculateProgressMetrics,
+  calculateBudgetMetrics,
+  calculateDelayMetrics,
+} from "../utils/projectMetrics";
+import InterventionModal from "../components/InterventionModal";
 
 // ── Display helpers ──────────────────────────────────────────────────────────
 
@@ -23,33 +31,87 @@ function fmtDate(s: string | null | undefined): string {
   }
 }
 
-function fmtDelay(months: number | null | undefined): string {
-  if (months == null || months <= 0) return "On Schedule";
-  return `${months.toFixed(1)} months`;
-}
-
 // Build display object that matches the JSX field references
-function toDisplay(p: Project) {
-  const targetProgress = p.physicalProgress - p.progressGap; // progressGap is negative when behind
+function toDisplay(p: Project, prediction: RiskPredictionResult | null) {
+  const riskLevel = prediction?.risk_level ?? p.risk ?? "Medium";
+  const riskScoreNum = prediction?.risk_score ?? null;
+  const riskScore = prediction ? `${prediction.risk_score.toFixed(1)} / 100` : null;
+
+  // Requirement 4: Consistent health from risk score/level
+  const health = deriveCurrentHealth(riskScoreNum, riskLevel);
+
+  // Requirement 1 & 2: Actual vs Target Progress & Progress Variance
+  const progressMetrics = calculateProgressMetrics(p);
+
+  // Requirement 3: Budget Utilisation
+  const budgetMetrics = calculateBudgetMetrics(p);
+
+  // Requirement 5 & 6: Delay Terminology & Completed Projects
+  const delayMetrics = calculateDelayMetrics(p, prediction);
+
+  // Requirement 8: Logical risk factors grounded in actual project data
+  const dynamicRiskFactors: Array<{ factor: string; severity: string; impact: string }> = [];
+  if (delayMetrics.currentDelayMonths > 0) {
+    dynamicRiskFactors.push({
+      factor: `Schedule Delay (${delayMetrics.currentDelayStr})`,
+      severity: delayMetrics.currentDelayMonths > 24 ? "Critical" : delayMetrics.currentDelayMonths > 6 ? "High" : "Medium",
+      impact: "High",
+    });
+  }
+  if (progressMetrics.variance < 0) {
+    dynamicRiskFactors.push({
+      factor: `Progress Gap (${progressMetrics.varianceText})`,
+      severity: progressMetrics.variance < -20 ? "Critical" : "High",
+      impact: "High",
+    });
+  }
+  if (budgetMetrics.isOverBudget) {
+    dynamicRiskFactors.push({
+      factor: `Cost Overrun (${budgetMetrics.overPct}% over budget)`,
+      severity: "High",
+      impact: "Medium",
+    });
+  } else if (p.expenditurePercent > 80 && p.physicalProgress < 50) {
+    dynamicRiskFactors.push({
+      factor: `High Budget Absorption (${p.expenditurePercent.toFixed(1)}% spent at ${p.physicalProgress}% progress)`,
+      severity: "Medium",
+      impact: "Medium",
+    });
+  }
+  if (dynamicRiskFactors.length === 0) {
+    dynamicRiskFactors.push({
+      factor: "No critical indicator anomalies detected",
+      severity: "Low",
+      impact: "Low",
+    });
+  }
+
   return {
     name: p.name,
     sector: p.sector,
     ministry: p.ministry,
     agency: p.agency,
     state: p.state ?? p.agency,
-    risk: p.risk ?? "Medium",
-    health: p.health ?? "—",
-    delay: fmtDelay(p.actualDelayMonths ?? p.predictedDelayMonths),
-    progress: p.physicalProgress,
-    progressGap: `${Math.abs(p.progressGap).toFixed(1)}%`,
-    targetProgress: Math.max(0, Math.min(100, targetProgress)),
-    expectedCompletion: fmtDate(p.revisedCompletion ?? p.originalCompletion),
+    risk: riskLevel,
+    riskScore: riskScore,
+    health: health,
+    isCompleted: progressMetrics.isCompleted,
+    actualProgress: progressMetrics.actualProgress,
+    targetProgress: progressMetrics.targetProgress,
+    variance: progressMetrics.variance,
+    varianceText: progressMetrics.varianceText,
+    currentDelayStr: delayMetrics.currentDelayStr,
+    predictedAdditionalDelayStr: delayMetrics.predictedAdditionalDelayStr,
+    expectedCompletion: delayMetrics.expectedCompletionStr,
     originalCompletion: fmtDate(p.originalCompletion),
     originalCost: fmtCr(p.originalCost),
     expenditure: fmtCr(p.expenditure),
     remainingBudget: fmtCr(p.remainingBudget),
-    expenditurePercent: p.expenditurePercent,
-    riskFactors: p.riskFactors ?? [],
+    expenditurePercent: budgetMetrics.utilisation,
+    isOverBudget: budgetMetrics.isOverBudget,
+    overPct: budgetMetrics.overPct,
+    budgetStatusText: budgetMetrics.statusText,
+    riskFactors: dynamicRiskFactors,
     milestones: p.milestones ?? [],
   };
 }
@@ -63,35 +125,55 @@ export default function ProjectOverview({
   project: string | null;
   navigate: (s: Screen, project?: string) => void;
 }) {
-  const [data, setData] = useState<ReturnType<typeof toDisplay> | null>(null);
+  const [rawProject, setRawProject] = useState<Project | null>(null);
+  const [prediction, setPrediction] = useState<RiskPredictionResult | null>(null);
+  const [predictLoading, setPredictLoading] = useState(false);
+  const [predictError, setPredictError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [notFound, setNotFound] = useState(false);
   const [activeTab, setActiveTab] = useState<"overview" | "milestones" | "budget">("overview");
+  const [isInterventionModalOpen, setIsInterventionModalOpen] = useState(false);
 
   useEffect(() => {
     if (!project) {
-      setData(null);
+      setRawProject(null);
+      setPrediction(null);
       setNotFound(false);
       return;
     }
     setLoading(true);
     setNotFound(false);
-    setData(null);
+    setRawProject(null);
+    setPrediction(null);
+    setPredictError(null);
     setActiveTab("overview");
 
     getProject(project)
-      .then((p) => {
+      .then(async (p) => {
         if (!p) {
           setNotFound(true);
+          setLoading(false);
         } else {
-          setData(toDisplay(p));
+          setRawProject(p);
+          setLoading(false);
+
+          setPredictLoading(true);
+          try {
+            const res = await predictProjectRisk(p);
+            setPrediction(res);
+          } catch (err: any) {
+            console.error("[ProjectOverview] prediction API error:", err);
+            setPredictError("FastAPI backend offline (http://localhost:8000)");
+          } finally {
+            setPredictLoading(false);
+          }
         }
       })
       .catch((err) => {
         console.error("[ProjectOverview] fetch failed:", err);
         setNotFound(true);
-      })
-      .finally(() => setLoading(false));
+        setLoading(false);
+      });
   }, [project]);
 
   const riskColors: Record<string, string> = {
@@ -153,9 +235,9 @@ export default function ProjectOverview({
     );
   }
 
-  if (!data) return null;
+  if (!rawProject) return null;
 
-  const p = data;
+  const p = toDisplay(rawProject, prediction);
 
   return (
     <div className="min-h-full bg-slate-50 fade-in">
@@ -180,7 +262,7 @@ export default function ProjectOverview({
                   border: `1px solid ${riskColors[p.risk]}30`,
                 }}
               >
-                {p.risk} Risk
+                {predictLoading ? "Calculating…" : `${p.risk} Risk`}
               </span>
               <span className="text-xs text-slate-400">{p.sector} · {p.agency}</span>
             </div>
@@ -209,6 +291,7 @@ export default function ProjectOverview({
               Explain Risk
             </button>
             <button
+              onClick={() => setIsInterventionModalOpen(true)}
               className="px-4 py-2 rounded-lg text-sm font-semibold border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
             >
               Create Intervention
@@ -218,14 +301,51 @@ export default function ProjectOverview({
       </div>
 
       <div className="px-8 py-6">
+        {predictError && (
+          <div className="mb-4 px-4 py-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs font-medium flex items-center gap-2">
+            <span>⚠️</span>
+            <span>{predictError}. Ensure backend server is active (`uvicorn main:app --reload`).</span>
+          </div>
+        )}
+
         {/* Status strip */}
         <div className="grid grid-cols-5 gap-3 mb-6">
           {[
-            { label: "Current Health", value: p.health, valueColor: "#dc2626", bg: "#fef2f2", border: "#fecaca" },
-            { label: "Expected Delay", value: p.delay, valueColor: "#dc2626", bg: "#fef2f2", border: "#fecaca" },
-            { label: "Physical Progress", value: `${p.progress}%`, valueColor: "#2563eb", bg: "#eff6ff", border: "#bfdbfe" },
-            { label: "Est. Completion", value: p.expectedCompletion, valueColor: "#0f172a", bg: "white", border: "#e2e8f0" },
-            { label: "Priority", value: p.risk, valueColor: riskColors[p.risk], bg: riskColors[p.risk] + "10", border: riskColors[p.risk] + "30" },
+            { 
+              label: "Current Health", 
+              value: p.health, 
+              valueColor: p.health === "On Track" ? "#16a34a" : p.health === "Watch" ? "#d97706" : p.health === "At Risk" ? "#ea580c" : "#dc2626", 
+              bg: p.health === "On Track" ? "#f0fdf4" : p.health === "Watch" ? "#fffbeb" : p.health === "At Risk" ? "#fff7ed" : "#fef2f2", 
+              border: p.health === "On Track" ? "#bbf7d0" : p.health === "Watch" ? "#fde68a" : p.health === "At Risk" ? "#fed7aa" : "#fecaca" 
+            },
+            { 
+              label: "Current Delay (Historical)", 
+              value: p.currentDelayStr, 
+              valueColor: "#dc2626", 
+              bg: "#fef2f2", 
+              border: "#fecaca" 
+            },
+            { 
+              label: p.isCompleted ? "Status" : "Predicted Addl. Delay (AI)", 
+              value: p.isCompleted ? "Completed" : (predictLoading ? "Calculating…" : (p.predictedAdditionalDelayStr ?? "API Offline")), 
+              valueColor: p.isCompleted ? "#16a34a" : "#dc2626", 
+              bg: p.isCompleted ? "#f0fdf4" : "#fef2f2", 
+              border: p.isCompleted ? "#bbf7d0" : "#fecaca" 
+            },
+            { 
+              label: "AI Risk Score", 
+              value: predictLoading ? "Calculating…" : (p.riskScore ?? "API Offline"), 
+              valueColor: "#ea580c", 
+              bg: "#fff7ed", 
+              border: "#fed7aa" 
+            },
+            { 
+              label: "AI Risk Level", 
+              value: predictLoading ? "Calculating…" : p.risk, 
+              valueColor: riskColors[p.risk], 
+              bg: riskColors[p.risk] + "10", 
+              border: riskColors[p.risk] + "30" 
+            },
           ].map((s) => (
             <div key={s.label} className="rounded-xl p-4" style={{ background: s.bg, border: `1px solid ${s.border}`, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
               <div className="text-xs text-slate-500 mb-1.5">{s.label}</div>
@@ -258,11 +378,11 @@ export default function ProjectOverview({
               <h3 className="text-sm font-semibold text-slate-800 mb-4">Progress vs Target</h3>
               <div className="flex items-end justify-between gap-3 mb-3">
                 <div>
-                  <div className="font-display font-bold text-3xl text-slate-900">{p.progress}%</div>
+                  <div className="font-display font-bold text-3xl text-slate-900">{p.actualProgress}%</div>
                   <div className="text-xs text-slate-400 mt-0.5">Actual progress</div>
                 </div>
                 <div className="text-right">
-                  <div className="font-display font-bold text-3xl" style={{ color: "#dc2626" }}>{Math.round(p.targetProgress)}%</div>
+                  <div className="font-display font-bold text-3xl" style={{ color: "#dc2626" }}>{p.targetProgress}%</div>
                   <div className="text-xs text-slate-400 mt-0.5">Target progress</div>
                 </div>
               </div>
@@ -274,7 +394,7 @@ export default function ProjectOverview({
                 />
                 <div
                   className="absolute top-0 left-0 h-full rounded-full"
-                  style={{ width: `${p.progress}%`, background: "#2563eb" }}
+                  style={{ width: `${Math.min(100, p.actualProgress)}%`, background: "#2563eb" }}
                 />
               </div>
               <div className="flex items-center justify-between text-xs">
@@ -289,9 +409,13 @@ export default function ProjectOverview({
               </div>
               <div
                 className="mt-4 px-3 py-2.5 rounded-lg text-xs font-medium"
-                style={{ background: "#fef2f2", border: "1px solid #fecaca", color: "#dc2626" }}
+                style={{
+                  background: p.variance >= 0 ? "#f0fdf4" : "#fef2f2",
+                  border: `1px solid ${p.variance >= 0 ? "#bbf7d0" : "#fecaca"}`,
+                  color: p.variance >= 0 ? "#16a34a" : "#dc2626",
+                }}
               >
-                Progress Gap: <strong>{p.progressGap}</strong> behind target
+                Progress Variance: <strong>{p.varianceText}</strong>
               </div>
             </div>
 
@@ -335,7 +459,7 @@ export default function ProjectOverview({
                     { label: "Ministry", value: p.ministry },
                     { label: "Implementing Agency", value: p.agency },
                     { label: "Original Deadline", value: p.originalCompletion },
-                    { label: "Revised Deadline", value: p.expectedCompletion },
+                    { label: "Expected Completion", value: p.expectedCompletion },
                   ].map((f) => (
                     <div key={f.label} className="flex items-start justify-between gap-2">
                       <span className="text-xs text-slate-400 flex-shrink-0">{f.label}</span>
@@ -400,7 +524,7 @@ export default function ProjectOverview({
           <div className="grid grid-cols-3 gap-4">
             {[
               { label: "Original Cost", value: p.originalCost, sub: "Sanctioned amount", color: "#0f172a", bg: "white", border: "#e2e8f0" },
-              { label: "Expenditure to Date", value: p.expenditure, sub: `${p.progress}% of project completed`, color: "#2563eb", bg: "#eff6ff", border: "#bfdbfe" },
+              { label: "Expenditure to Date", value: p.expenditure, sub: `${p.actualProgress}% of project completed`, color: "#2563eb", bg: "#eff6ff", border: "#bfdbfe" },
               { label: "Remaining Budget", value: p.remainingBudget, sub: "Available for completion", color: "#16a34a", bg: "#f0fdf4", border: "#bbf7d0" },
             ].map((b) => (
               <div key={b.label} className="rounded-xl p-6" style={{ background: b.bg, border: `1px solid ${b.border}`, boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
@@ -415,23 +539,39 @@ export default function ProjectOverview({
               <div className="relative h-4 bg-slate-100 rounded-full overflow-hidden mb-2">
                 <div
                   className="absolute top-0 left-0 h-full rounded-full"
-                  style={{ width: `${Math.min(100, p.expenditurePercent)}%`, background: p.expenditurePercent > 100 ? "#dc2626" : "#2563eb" }}
+                  style={{ width: `${Math.min(100, p.expenditurePercent)}%`, background: p.isOverBudget ? "#dc2626" : "#2563eb" }}
                 />
               </div>
               <div className="flex items-center justify-between text-xs text-slate-500">
                 <span>₹0</span>
-                <span className="font-medium" style={{ color: p.expenditurePercent > 100 ? "#dc2626" : "#2563eb" }}>
+                <span className="font-medium" style={{ color: p.isOverBudget ? "#dc2626" : "#2563eb" }}>
                   {p.expenditurePercent.toFixed(1)}% utilised
                 </span>
                 <span>{p.originalCost}</span>
               </div>
-              <div className="mt-4 p-3 rounded-lg text-xs" style={{ background: "#fffbeb", border: "1px solid #fde68a", color: "#92400e" }}>
-                Physical progress ({p.progress}%) vs budget utilisation ({p.expenditurePercent.toFixed(1)}%). Review recommended if gap exceeds 15%.
+              <div
+                className="mt-4 p-3 rounded-lg text-xs font-medium"
+                style={{
+                  background: p.isOverBudget ? "#fef2f2" : "#f0fdf4",
+                  border: `1px solid ${p.isOverBudget ? "#fecaca" : "#bbf7d0"}`,
+                  color: p.isOverBudget ? "#dc2626" : "#16a34a",
+                }}
+              >
+                {p.budgetStatusText}
               </div>
             </div>
           </div>
         )}
       </div>
+
+      {isInterventionModalOpen && rawProject && (
+        <InterventionModal
+          project={rawProject}
+          actionTitle=""
+          onClose={() => setIsInterventionModalOpen(false)}
+          onSaved={(updatedProject) => setRawProject(updatedProject)}
+        />
+      )}
     </div>
   );
 }

@@ -1,10 +1,13 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 import type { Screen } from "../App";
 import type { Project } from "../types/project";
 import { getProjectsCached } from "../services/projectService";
 
-const riskData = [
+import { predictProjectRisk, predictProjectsRiskBatch, type RiskPredictionResult } from "../services/apiService";
+import AddProjectModal from "../components/AddProjectModal";
+
+const defaultRiskData = [
   { name: "Critical", value: 47, color: "#dc2626" },
   { name: "High", value: 112, color: "#ea580c" },
   { name: "Medium", value: 298, color: "#d97706" },
@@ -47,24 +50,48 @@ const sectorBreakdown = [
 export default function CommandCenter({ navigate }: { navigate: (s: Screen, project?: string) => void }) {
   const [search, setSearch] = useState("");
   const [showNotif, setShowNotif] = useState(false);
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [predictions, setPredictions] = useState<Map<string, RiskPredictionResult>>(new Map());
   const [immediateProjects, setImmediateProjects] = useState<Project[]>([]);
 
-  // Load top 4 most-delayed / critically-behind projects from Firestore
+  // Load projects & predictions from Firestore + FastAPI
   useEffect(() => {
     getProjectsCached()
-      .then((all) => {
-        const sorted = [...all].sort((a, b) => {
-          // Prioritise by: risk level then progress gap then actual delay
-          const riskOrder: Record<string, number> = { Critical: 0, High: 1, Medium: 2, Low: 3 };
-          const rA = riskOrder[a.risk ?? "Low"] ?? 3;
-          const rB = riskOrder[b.risk ?? "Low"] ?? 3;
-          if (rA !== rB) return rA - rB;
-          return a.progressGap - b.progressGap; // more negative = further behind
-        });
-        setImmediateProjects(sorted.slice(0, 4));
+      .then(async (all) => {
+        setProjects(all);
+        try {
+          const predMap = await predictProjectsRiskBatch(all);
+          setPredictions(predMap);
+
+          const sorted = [...all].sort((a, b) => {
+            const scoreA = predMap.get(a.id)?.risk_score ?? 0;
+            const scoreB = predMap.get(b.id)?.risk_score ?? 0;
+            if (scoreA !== scoreB) return scoreB - scoreA;
+            return a.progressGap - b.progressGap;
+          });
+          setImmediateProjects(sorted.slice(0, 4));
+        } catch (err) {
+          console.warn("[CommandCenter] predictions fetch error:", err);
+          setImmediateProjects(all.slice(0, 4));
+        }
       })
       .catch((err) => console.error("[CommandCenter] Firestore load failed:", err));
   }, []);
+
+  const searchResults = useMemo(() => {
+    if (!search.trim()) return [];
+    const q = search.trim().toLowerCase();
+    return projects.filter(
+      (p) =>
+        p.name.toLowerCase().includes(q) ||
+        p.id.toLowerCase().includes(q) ||
+        String(p.projectCode).includes(q) ||
+        p.sector.toLowerCase().includes(q) ||
+        p.ministry.toLowerCase().includes(q) ||
+        p.agency.toLowerCase().includes(q)
+    );
+  }, [projects, search]);
 
   const riskColors: Record<string, string> = {
     Critical: "#dc2626",
@@ -72,6 +99,21 @@ export default function CommandCenter({ navigate }: { navigate: (s: Screen, proj
     Medium: "#d97706",
     Low: "#16a34a",
   };
+
+  const totalProjectsCount = projects.length;
+  const criticalCount = projects.filter((p) => (predictions.get(p.id)?.risk_level ?? p.risk) === "Critical").length;
+  const highCount = projects.filter((p) => (predictions.get(p.id)?.risk_level ?? p.risk) === "High").length;
+  const medLowCount = projects.filter((p) => {
+    const r = predictions.get(p.id)?.risk_level ?? p.risk;
+    return r === "Medium" || r === "Low";
+  }).length;
+
+  const dynamicRiskData = [
+    { name: "Critical", value: criticalCount, color: "#dc2626" },
+    { name: "High", value: highCount, color: "#ea580c" },
+    { name: "Medium", value: projects.filter((p) => (predictions.get(p.id)?.risk_level ?? p.risk) === "Medium").length, color: "#d97706" },
+    { name: "Low", value: projects.filter((p) => (predictions.get(p.id)?.risk_level ?? p.risk) === "Low").length, color: "#16a34a" },
+  ];
 
   return (
     <div className="min-h-full bg-slate-50 fade-in">
@@ -91,13 +133,62 @@ export default function CommandCenter({ navigate }: { navigate: (s: Screen, proj
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search projects…"
-              className="pl-9 pr-4 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg text-slate-700 placeholder-slate-400 w-56"
+              placeholder="Search projects by name, ID, sector…"
+              className="pl-9 pr-4 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg text-slate-700 placeholder-slate-400 w-64"
               style={{ outline: "none" }}
               onFocus={(e) => (e.target.style.borderColor = "#2563eb")}
               onBlur={(e) => (e.target.style.borderColor = "#e2e8f0")}
             />
+
+            {/* Interactive Search Overlay */}
+            {search.trim() !== "" && (
+              <div className="absolute left-0 top-11 w-80 bg-white border border-slate-200 rounded-xl shadow-xl z-30 max-h-72 overflow-y-auto divide-y divide-slate-50">
+                {searchResults.length === 0 ? (
+                  <div className="px-4 py-3 text-xs text-slate-400">No matching projects found.</div>
+                ) : (
+                  searchResults.slice(0, 8).map((p) => {
+                    const pred = predictions.get(p.id);
+                    const effectiveRisk = pred?.risk_level ?? p.risk ?? "Medium";
+                    return (
+                      <button
+                        key={p.id}
+                        onClick={() => {
+                          setSearch("");
+                          navigate("project-overview", p.id);
+                        }}
+                        className="w-full text-left px-4 py-2.5 hover:bg-slate-50 flex items-center justify-between gap-2 transition-colors"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="text-xs font-semibold text-slate-800 truncate">{p.name}</div>
+                          <div className="text-[10px] text-slate-400">{p.sector} · ID: {p.id}</div>
+                        </div>
+                        <span
+                          className="text-[10px] font-semibold px-2 py-0.5 rounded-full flex-shrink-0"
+                          style={{
+                            background: riskColors[effectiveRisk] + "18",
+                            color: riskColors[effectiveRisk],
+                            border: `1px solid ${riskColors[effectiveRisk]}30`,
+                          }}
+                        >
+                          {effectiveRisk}
+                        </span>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            )}
           </div>
+
+          <button
+            onClick={() => setIsAddModalOpen(true)}
+            className="px-3.5 py-2 text-xs font-semibold text-white rounded-lg transition-colors flex items-center gap-1.5 shadow-xs"
+            style={{ background: "#2563eb" }}
+          >
+            <span>+</span>
+            <span>Add Project</span>
+          </button>
+
           <div className="relative">
             <button
               onClick={() => setShowNotif(!showNotif)}
@@ -142,21 +233,21 @@ export default function CommandCenter({ navigate }: { navigate: (s: Screen, proj
         <div className="flex items-center justify-between mb-6">
           <div>
             <h2 className="font-display font-bold text-slate-900 text-2xl">Infrastructure Risk Command Center</h2>
-            <p className="text-sm text-slate-500 mt-0.5">Live monitoring across 1,247 active projects · Last updated 09:14 IST</p>
+            <p className="text-sm text-slate-500 mt-0.5">Live monitoring across {totalProjectsCount} projects · Powered by NirmaanAI Random Forest</p>
           </div>
           <div className="flex items-center gap-2 text-xs font-medium px-3 py-1.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
             <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-            Live · All systems operational
+            Live · ML API Connected
           </div>
         </div>
 
         {/* KPI Cards */}
         <div className="grid grid-cols-4 gap-4 mb-6">
           {[
-            { label: "Total Projects", value: "1,247", sub: "Across 6 sectors", color: "#2563eb", bg: "#eff6ff", border: "#bfdbfe" },
-            { label: "Critical Projects", value: "47", sub: "↑ 3 from last week", color: "#dc2626", bg: "#fef2f2", border: "#fecaca" },
-            { label: "High Risk", value: "112", sub: "↓ 5 from last week", color: "#ea580c", bg: "#fff7ed", border: "#fed7aa" },
-            { label: "Med / Low Risk", value: "1,088", sub: "↑ 2 from last week", color: "#16a34a", bg: "#f0fdf4", border: "#bbf7d0" },
+            { label: "Total Projects", value: totalProjectsCount ? totalProjectsCount.toLocaleString("en-IN") : "...", sub: "Active Firestore database", color: "#2563eb", bg: "#eff6ff", border: "#bfdbfe" },
+            { label: "Critical Projects", value: String(criticalCount), sub: "FastAPI Risk Score > 70", color: "#dc2626", bg: "#fef2f2", border: "#fecaca" },
+            { label: "High Risk", value: String(highCount), sub: "FastAPI Risk Score 50–70", color: "#ea580c", bg: "#fff7ed", border: "#fed7aa" },
+            { label: "Med / Low Risk", value: String(medLowCount), sub: "FastAPI Risk Score < 50", color: "#16a34a", bg: "#f0fdf4", border: "#bbf7d0" },
           ].map((k) => (
             <div
               key={k.label}
@@ -183,7 +274,7 @@ export default function CommandCenter({ navigate }: { navigate: (s: Screen, proj
               <ResponsiveContainer width={120} height={120}>
                 <PieChart>
                   <Pie
-                    data={riskData}
+                    data={dynamicRiskData}
                     cx={55}
                     cy={55}
                     innerRadius={36}
@@ -192,7 +283,7 @@ export default function CommandCenter({ navigate }: { navigate: (s: Screen, proj
                     dataKey="value"
                     strokeWidth={0}
                   >
-                    {riskData.map((entry, index) => (
+                    {dynamicRiskData.map((entry, index) => (
                       <Cell key={index} fill={entry.color} />
                     ))}
                   </Pie>
@@ -203,7 +294,7 @@ export default function CommandCenter({ navigate }: { navigate: (s: Screen, proj
                 </PieChart>
               </ResponsiveContainer>
               <div className="flex-1 space-y-2">
-                {riskData.map((d) => (
+                {dynamicRiskData.map((d) => (
                   <div key={d.name} className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: d.color }} />
@@ -259,7 +350,7 @@ export default function CommandCenter({ navigate }: { navigate: (s: Screen, proj
             <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
               <div className="flex items-center gap-2">
                 <div className="w-2 h-2 rounded-full bg-red-500" />
-                <h3 className="font-semibold text-slate-800 text-sm">Immediate Attention Required</h3>
+                <h3 className="font-semibold text-slate-800 text-sm">Immediate Attention Required (Highest AI Risk Score)</h3>
               </div>
               <button
                 onClick={() => navigate("priority-queue")}
@@ -272,44 +363,48 @@ export default function CommandCenter({ navigate }: { navigate: (s: Screen, proj
               {immediateProjects.length === 0 ? (
                 <div className="px-5 py-8 text-center text-sm text-slate-400">Loading projects…</div>
               ) : (
-                immediateProjects.map((p) => (
-                  <button
-                    key={p.id}
-                    onClick={() => navigate("project-overview", p.id)}
-                    className="w-full text-left px-5 py-3.5 hover:bg-slate-50 transition-colors"
-                  >
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span
-                            className="text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0"
-                            style={{
-                              background: riskColors[p.risk ?? "Medium"] + "18",
-                              color: riskColors[p.risk ?? "Medium"],
-                              border: `1px solid ${riskColors[p.risk ?? "Medium"]}30`,
-                            }}
-                          >
-                            {p.risk ?? "Medium"}
-                          </span>
-                          <span className="text-xs text-slate-400">{p.sector} · {p.agency}</span>
+                immediateProjects.map((p) => {
+                  const pred = predictions.get(p.id);
+                  const effectiveRisk = pred?.risk_level ?? p.risk ?? "Medium";
+                  return (
+                    <button
+                      key={p.id}
+                      onClick={() => navigate("project-overview", p.id)}
+                      className="w-full text-left px-5 py-3.5 hover:bg-slate-50 transition-colors"
+                    >
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span
+                              className="text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0"
+                              style={{
+                                background: riskColors[effectiveRisk] + "18",
+                                color: riskColors[effectiveRisk],
+                                border: `1px solid ${riskColors[effectiveRisk]}30`,
+                              }}
+                            >
+                              {effectiveRisk} {pred ? `(${pred.risk_score.toFixed(0)})` : ""}
+                            </span>
+                            <span className="text-xs text-slate-400">{p.sector} · {p.agency}</span>
+                          </div>
+                          <div className="text-sm font-semibold text-slate-800 truncate">{p.name}</div>
                         </div>
-                        <div className="text-sm font-semibold text-slate-800 truncate">{p.name}</div>
-                      </div>
-                      <div className="flex-shrink-0 text-right">
-                        <div className="text-xs text-slate-500 mb-1">Progress Gap</div>
-                        <div className="text-sm font-bold text-red-600">
-                          {Math.abs(p.progressGap).toFixed(1)}% behind
+                        <div className="flex-shrink-0 text-right">
+                          <div className="text-xs text-slate-500 mb-1">AI Predicted Delay</div>
+                          <div className="text-sm font-bold text-red-600">
+                            {pred ? (pred.predicted_delay_months > 0 ? `${pred.predicted_delay_months.toFixed(1)} mo` : "On Schedule") : `${Math.abs(p.progressGap).toFixed(1)}% gap`}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                    <div className="mt-2.5 flex items-center gap-2">
-                      <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                        <div className="h-full rounded-full bg-blue-500" style={{ width: `${p.physicalProgress}%` }} />
+                      <div className="mt-2.5 flex items-center gap-2">
+                        <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                          <div className="h-full rounded-full bg-blue-500" style={{ width: `${p.physicalProgress}%` }} />
+                        </div>
+                        <span className="text-xs text-slate-500 flex-shrink-0">{p.physicalProgress}% complete</span>
                       </div>
-                      <span className="text-xs text-slate-500 flex-shrink-0">{p.physicalProgress}% complete</span>
-                    </div>
-                  </button>
-                ))
+                    </button>
+                  );
+                })
               )}
             </div>
           </div>
@@ -363,6 +458,19 @@ export default function CommandCenter({ navigate }: { navigate: (s: Screen, proj
           </div>
         </div>
       </div>
+
+      <AddProjectModal
+        isOpen={isAddModalOpen}
+        onClose={() => setIsAddModalOpen(false)}
+        onSaved={(newProj) => {
+          setProjects((prev) => [newProj, ...prev]);
+          predictProjectRisk(newProj)
+            .then((res) => {
+              setPredictions((prev) => new Map(prev).set(newProj.id, res));
+            })
+            .catch(() => {});
+        }}
+      />
     </div>
   );
 }

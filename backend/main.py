@@ -1,7 +1,9 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import joblib
 import pandas as pd
+from risk_score import calculate_risk_score
 
 # Load the trained model
 model = joblib.load(
@@ -15,8 +17,21 @@ features = joblib.load(
 
 app = FastAPI(
     title="NirmaanAI Risk Prediction API",
-    description="AI-powered infrastructure project delay prediction",
+    description="AI-powered infrastructure project delay and risk score prediction",
     version="1.0"
+)
+
+origins = [
+    "http://localhost:8443",
+    "http://localhost:5173",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -61,17 +76,15 @@ def predict(project: ProjectData):
 
     predicted_delay = float(model.predict(input_data)[0])
 
-    # Prototype risk classification
-    if predicted_delay <= 3:
-        risk_level = "Low"
-    elif predicted_delay <= 6:
-        risk_level = "Medium"
-    elif predicted_delay <= 12:
-        risk_level = "High"
-    else:
-        risk_level = "Critical"
+    # Calculate composite Risk Score & Risk Level using REVISED formula
+    risk_score, risk_level = calculate_risk_score(
+        predicted_delay_months=predicted_delay,
+        expenditure_percent=project.expenditure_percent,
+        physical_progress=project.physical_progress,
+    )
 
     return {
         "predicted_delay_months": round(predicted_delay, 2),
+        "risk_score": risk_score,
         "risk_level": risk_level
     }

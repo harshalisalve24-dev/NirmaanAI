@@ -3,46 +3,60 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 
 import type { Screen } from "../App";
 import type { Project } from "../types/project";
 import { getProject } from "../services/projectService";
-import { buildMLPayload } from "../utils/mlPayload";
+import { predictProjectRisk, type RiskPredictionResult } from "../services/apiService";
+import {
+  deriveCurrentHealth,
+  calculateProgressMetrics,
+  calculateBudgetMetrics,
+  calculateDelayMetrics,
+} from "../utils/projectMetrics";
+import InterventionModal from "../components/InterventionModal";
 
-// ── Derive analysis display from a Project ───────────────────────────────────
+// ── Derive analysis display from a Project & Prediction ─────────────────────
 
 const RISK_FACTOR_COLORS = ["#dc2626", "#ea580c", "#d97706", "#f59e0b", "#16a34a"];
 
-function buildAnalysis(p: Project) {
+function buildAnalysis(p: Project, prediction: RiskPredictionResult | null) {
+  const progressMetrics = calculateProgressMetrics(p);
+  const budgetMetrics = calculateBudgetMetrics(p);
+  const delayMetrics = calculateDelayMetrics(p, prediction);
+
   const riskFactors = (p.riskFactors ?? []).map((rf, i) => ({
     name: rf.factor,
     contribution: Math.max(5, Math.round(40 - i * 7)),
     color: RISK_FACTOR_COLORS[i] ?? "#94a3b8",
   }));
 
-  const delayMonths = p.actualDelayMonths ?? p.predictedDelayMonths ?? 0;
-  const delayStr = delayMonths > 0 ? `${delayMonths.toFixed(1)} months` : "On Schedule";
+  const delayMonths = prediction ? prediction.predicted_delay_months : 0;
+  const delayStr = delayMetrics.predictedAdditionalDelayStr ?? "Calculating…";
+  const riskScoreStr = prediction ? `${prediction.risk_score.toFixed(1)} / 100` : "Calculating…";
+  const riskLevel = prediction?.risk_level ?? p.risk ?? "Medium";
+  const currentHealth = deriveCurrentHealth(prediction?.risk_score, riskLevel);
 
   const keyIndicators = [
     {
       label: "Physical Progress",
       value: `${p.physicalProgress}%`,
       status: p.physicalProgress < 40 ? "red" : p.physicalProgress < 70 ? "yellow" : "green",
-      note: `Expenditure: ${p.expenditurePercent.toFixed(1)}% of budget used`,
+      note: `Target: ${progressMetrics.targetProgress}% (${progressMetrics.varianceText})`,
     },
     {
-      label: "Expected Delay",
-      value: delayStr,
+      label: progressMetrics.isCompleted ? "Completion Status" : "AI Predicted Addl. Delay",
+      value: progressMetrics.isCompleted ? "Completed" : delayStr,
       status: delayMonths > 12 ? "red" : delayMonths > 3 ? "yellow" : "green",
-      note: `Progress gap: ${Math.abs(p.progressGap).toFixed(1)}% behind target`,
+      note: `Historical Delay: ${delayMetrics.currentDelayStr}`,
+    },
+    {
+      label: "AI Risk Score",
+      value: riskScoreStr,
+      status: prediction && prediction.risk_score >= 70 ? "red" : prediction && prediction.risk_score >= 50 ? "yellow" : "green",
+      note: `Health: ${currentHealth} (${riskLevel} Risk)`,
     },
     {
       label: "Budget Utilisation",
       value: `${p.expenditurePercent.toFixed(1)}%`,
-      status: p.expenditurePercent > 100 ? "red" : p.expenditurePercent < 20 ? "yellow" : "green",
-      note: p.costStatus ? `Cost status: ${p.costStatus}` : "Within original budget",
-    },
-    {
-      label: "Project Stage",
-      value: p.projectStage,
-      status: p.expenditureEfficiency === "High Concern" ? "red" : "yellow",
-      note: `Efficiency: ${p.expenditureEfficiency ?? "Balanced"}`,
+      status: budgetMetrics.isOverBudget ? "red" : p.expenditurePercent < 20 ? "yellow" : "green",
+      note: budgetMetrics.isOverBudget ? `${budgetMetrics.overPct}% over original budget` : "Within original budget",
     },
   ];
 
@@ -51,21 +65,23 @@ function buildAnalysis(p: Project) {
     if (delayMonths > 6) return "Schedule Overrun — Progress & Expenditure Misalignment";
     if (p.expenditureEfficiency === "High Concern") return "Budget Overrun Risk — Expenditure Concern";
     if (p.progressGap < -30) return "Severe Progress Shortfall — Implementation Bottleneck";
-    return "Moderate Risk — Monitoring Required";
+    return `${riskLevel} Risk — Active Monitoring Required`;
   })();
 
-  const summary = `This project (${p.name}) is classified as ${p.risk ?? "Medium"} risk. ` +
+  const summary = `This project (${p.name}) is classified as ${riskLevel} risk (AI Composite Risk Score: ${riskScoreStr}). ` +
     `Physical progress stands at ${p.physicalProgress}% with ${p.expenditurePercent.toFixed(1)}% of budget utilised. ` +
-    (delayMonths > 0
-      ? `A schedule delay of ${delayStr} has been recorded. `
-      : "No schedule delay recorded. ") +
+    (prediction
+      ? (prediction.predicted_delay_months > 0
+          ? `An AI predicted schedule delay of ${delayStr} has been computed by Random Forest model. `
+          : "AI predicts project is on schedule. ")
+      : "AI prediction pending backend connection. ") +
     `Project stage: ${p.projectStage}. ` +
     `Expenditure efficiency: ${p.expenditureEfficiency ?? "Balanced"}.`;
 
   const interventions = (() => {
     const items: string[] = [];
     if (delayMonths > 12)
-      items.push(`Convene emergency review meeting — project is ${delayStr} delayed`);
+      items.push(`Convene emergency review meeting — project has ${delayStr} predicted delay`);
     if (p.progressGap < -20)
       items.push("Issue contractor performance notice — progress is significantly below target");
     if (p.expenditureEfficiency === "High Concern" || (p.costStatus ?? "").includes("Over"))
@@ -105,11 +121,14 @@ export default function AIRiskAnalysis({
   navigate: (s: Screen, project?: string) => void;
 }) {
   const [projectData, setProjectData] = useState<Project | null>(null);
-  const [analysis, setAnalysis] = useState<ReturnType<typeof buildAnalysis> | null>(null);
+  const [prediction, setPrediction] = useState<RiskPredictionResult | null>(null);
+  const [predictError, setPredictError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [explainMode, setExplainMode] = useState(false);
   const [explainStep, setExplainStep] = useState(0);
+  const [isInterventionModalOpen, setIsInterventionModalOpen] = useState(false);
+  const [interventionAction, setInterventionAction] = useState("");
 
   useEffect(() => {
     setLoading(true);
@@ -117,7 +136,8 @@ export default function AIRiskAnalysis({
     setExplainStep(0);
     setNotFound(false);
     setProjectData(null);
-    setAnalysis(null);
+    setPrediction(null);
+    setPredictError(null);
 
     if (!project) {
       setLoading(false);
@@ -125,19 +145,28 @@ export default function AIRiskAnalysis({
     }
 
     getProject(project)
-      .then((p) => {
+      .then(async (p) => {
         if (!p) {
           setNotFound(true);
+          setLoading(false);
         } else {
           setProjectData(p);
-          setAnalysis(buildAnalysis(p));
+          setLoading(false);
+
+          try {
+            const res = await predictProjectRisk(p);
+            setPrediction(res);
+          } catch (err: any) {
+            console.error("[AIRiskAnalysis] prediction API error:", err);
+            setPredictError("FastAPI backend offline (http://localhost:8000)");
+          }
         }
       })
       .catch((err) => {
         console.error("[AIRiskAnalysis] fetch failed:", err);
         setNotFound(true);
-      })
-      .finally(() => setLoading(false));
+        setLoading(false);
+      });
   }, [project]);
 
   const explanationSteps = [
@@ -191,7 +220,7 @@ export default function AIRiskAnalysis({
   }
 
   // ── Not found / no selection ──────────────────────────────────────────────
-  if (notFound || !project || !projectData || !analysis) {
+  if (notFound || !project || !projectData) {
     return (
       <div className="min-h-full bg-slate-50 flex items-center justify-center">
         <div className="text-center px-8 max-w-sm">
@@ -214,11 +243,8 @@ export default function AIRiskAnalysis({
     );
   }
 
-  const data = analysis;
-  const risk = projectData.risk ?? "Medium";
-  // Expose ML payload in console for dev verification (never sent automatically)
-  const _mlPayload = buildMLPayload(projectData);
-  void _mlPayload; // intentionally computed — used when "Run Analysis" calls FastAPI
+  const data = buildAnalysis(projectData, prediction);
+  const risk = prediction?.risk_level ?? projectData.risk ?? "Medium";
 
   return (
     <div className="min-h-full bg-slate-50 fade-in">
@@ -263,6 +289,12 @@ export default function AIRiskAnalysis({
       </div>
 
       <div className="px-8 py-6 space-y-5">
+        {predictError && (
+          <div className="px-4 py-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs font-medium flex items-center gap-2">
+            <span>⚠️</span>
+            <span>{predictError}. Ensure backend server is active (`uvicorn main:app --reload`).</span>
+          </div>
+        )}
         {/* Explain mode */}
         {explainMode && (
           <div className="bg-blue-950 rounded-xl p-5 border border-blue-900 fade-in">
@@ -421,29 +453,69 @@ export default function AIRiskAnalysis({
 
         {/* Recommended interventions */}
         <div className="bg-white rounded-xl border border-slate-200 p-5" style={{ boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
-          <div className="flex items-center gap-2 mb-4">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-              <path d="M8 1L10 6H15L11 9.5L12.5 15L8 12L3.5 15L5 9.5L1 6H6L8 1Z" fill="#fbbf24" stroke="#d97706" strokeWidth="0.8"/>
-            </svg>
-            <h3 className="font-semibold text-slate-800 text-sm">Recommended Interventions</h3>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <path d="M8 1L10 6H15L11 9.5L12.5 15L8 12L3.5 15L5 9.5L1 6H6L8 1Z" fill="#fbbf24" stroke="#d97706" strokeWidth="0.8"/>
+              </svg>
+              <h3 className="font-semibold text-slate-800 text-sm">Recommended Interventions (Click to Execute Action)</h3>
+            </div>
+            <span className="text-xs text-blue-600 font-medium">Click any action to assign</span>
           </div>
           <div className="space-y-2">
             {data.interventions.map((action, i) => (
-              <div key={i} className="flex items-start gap-3 p-3 rounded-lg" style={{ background: "#f8fafc", border: "1px solid #e2e8f0" }}>
+              <div
+                key={i}
+                onClick={() => {
+                  setInterventionAction(action);
+                  setIsInterventionModalOpen(true);
+                }}
+                className="flex items-start gap-3 p-3 rounded-lg cursor-pointer hover:border-blue-300 hover:bg-blue-50/50 transition-all group"
+                style={{ background: "#f8fafc", border: "1px solid #e2e8f0" }}
+              >
                 <div
-                  className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 text-xs font-bold text-white"
+                  className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 text-xs font-bold text-white group-hover:scale-105 transition-transform"
                   style={{ background: "#2563eb", minWidth: 20 }}
                 >
                   {i + 1}
                 </div>
-                <p className="text-sm text-slate-700 leading-relaxed">{action}</p>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-slate-800 group-hover:text-blue-700 leading-relaxed">{action}</p>
+                </div>
+                <button className="text-xs font-semibold text-blue-600 bg-blue-50 px-2.5 py-1 rounded border border-blue-200 group-hover:bg-blue-600 group-hover:text-white transition-colors flex-shrink-0">
+                  Take Action →
+                </button>
               </div>
             ))}
           </div>
-          <button className="mt-4 w-full py-2.5 rounded-lg text-sm font-semibold text-white" style={{ background: "#0f172a" }}>
-            Create Intervention Plan →
-          </button>
         </div>
+
+        {/* Assigned Interventions List */}
+        {projectData.interventions && projectData.interventions.length > 0 && (
+          <div className="bg-white rounded-xl border border-slate-200 p-5 fade-in" style={{ boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
+            <h3 className="font-semibold text-slate-800 text-sm mb-4">Assigned Interventions ({projectData.interventions.length})</h3>
+            <div className="space-y-3">
+              {projectData.interventions.map((int) => (
+                <div key={int.id} className="p-3.5 rounded-lg border border-slate-200 bg-slate-50 flex items-start justify-between gap-4">
+                  <div>
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 border border-blue-200">
+                        {int.status}
+                      </span>
+                      <span className="text-xs font-semibold text-slate-700">{int.department}</span>
+                    </div>
+                    <h4 className="text-sm font-bold text-slate-900">{int.action}</h4>
+                    <p className="text-xs text-slate-500 mt-1">{int.reason}</p>
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <div className="text-[10px] text-slate-400">Deadline</div>
+                    <div className="text-xs font-semibold text-slate-700">{int.deadline}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* ML Safety disclaimer */}
         <div className="flex items-start gap-2 px-4 py-3 rounded-lg" style={{ background: "#f8fafc", border: "1px solid #e2e8f0" }}>
@@ -459,6 +531,15 @@ export default function AIRiskAnalysis({
           </p>
         </div>
       </div>
+
+      {isInterventionModalOpen && projectData && (
+        <InterventionModal
+          project={projectData}
+          actionTitle={interventionAction}
+          onClose={() => setIsInterventionModalOpen(false)}
+          onSaved={(updatedProject) => setProjectData(updatedProject)}
+        />
+      )}
     </div>
   );
 }

@@ -57,6 +57,7 @@ export interface Project {
 
   // ── ML model outputs (filled by FastAPI response — NOT from CSV) ──────────
   predictedDelayMonths?: number;   // AI predicted delay — distinct from actualDelayMonths
+  riskScore?: number;              // AI composite Risk Score (0–100) from FastAPI
   expectedCompletion?: string;     // AI projected completion date
 
   // ── Prioritisation ────────────────────────────────────────────────────────
@@ -74,4 +75,17 @@ export interface Project {
     status: string;     // "Completed"|"In Progress"|"Delayed"|"Not Started"
     date: string;
   }>;
+
+  interventions?: Intervention[];
 }
+
+export interface Intervention {
+  id: string;
+  action: string;             // Recommended action title (e.g. "Expedite Procurement")
+  department: string;         // Responsible Department / Officer
+  deadline: string;           // ISO date string
+  reason: string;             // Reason / Notes
+  status: "Assigned" | "In Progress" | "Resolved" | "Escalated";
+  createdAt: string;          // ISO timestamp
+}
+

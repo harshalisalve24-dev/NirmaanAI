@@ -3,10 +3,11 @@ import {
   doc,
   getDoc,
   getDocs,
+  setDoc,
   writeBatch,
 } from "firebase/firestore";
 import { db } from "../firebase";
-import type { Project } from "../types/project";
+import type { Project, Intervention } from "../types/project";
 
 const COL = "projects";
 
@@ -20,6 +21,37 @@ export async function getProject(id: string): Promise<Project | null> {
 export async function getAllProjects(): Promise<Project[]> {
   const snap = await getDocs(collection(db, COL));
   return snap.docs.map((d) => d.data() as Project);
+}
+
+/**
+ * Save or update a single project document in Firestore.
+ * Automatically sanitizes undefined values and invalidates the session cache.
+ */
+export async function saveProject(project: Project): Promise<void> {
+  const safe = stripUndefined(project as unknown as Record<string, unknown>);
+  await setDoc(doc(db, COL, project.id), safe);
+  invalidateProjectCache();
+}
+
+/**
+ * Append a newly created intervention to a project's interventions array in Firestore.
+ */
+export async function addInterventionToProject(
+  projectId: string,
+  intervention: Intervention
+): Promise<Project | null> {
+  const p = await getProject(projectId);
+  if (!p) return null;
+
+  const existing = p.interventions ?? [];
+  const updatedInterventions = [intervention, ...existing];
+  const updatedProject: Project = {
+    ...p,
+    interventions: updatedInterventions,
+  };
+
+  await saveProject(updatedProject);
+  return updatedProject;
 }
 
 /**
