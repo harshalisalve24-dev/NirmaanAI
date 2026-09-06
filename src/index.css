@@ -1,0 +1,105 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap');
+@import 'tailwindcss';
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+@theme inline {
+  --font-sans: 'Inter', system-ui, sans-serif;
+  --font-display: 'Plus Jakarta Sans', system-ui, sans-serif;
+
+  --color-navy-950: #04080f;
+  --color-navy-900: #0a1628;
+  --color-navy-800: #0f2044;
+  --color-navy-700: #163058;
+  --color-navy-600: #1e4080;
+  --color-navy-500: #2563eb;
+
+  --color-risk-critical: #dc2626;
+  --color-risk-high: #ea580c;
+  --color-risk-medium: #d97706;
+  --color-risk-low: #16a34a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Hide scrollbars by default, show on hover/scroll */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+.sidebar-nav-item {
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.card-hover {
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+.card-hover:hover {
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+  transform: translateY(-1px);
+}
+
+.risk-badge-critical { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
+.risk-badge-high { background: #fff7ed; color: #ea580c; border: 1px solid #fed7aa; }
+.risk-badge-medium { background: #fffbeb; color: #d97706; border: 1px solid #fde68a; }
+.risk-badge-low { background: #f0fdf4; color: #16a34a; border: 1px solid #bbf7d0; }
+
+.map-marker {
+  cursor: pointer;
+  transition: transform 0.15s ease, filter 0.15s ease;
+}
+.map-marker:hover {
+  transform: scale(1.3);
+  filter: brightness(1.1);
+}
+
+.pulse-ring {
+  animation: pulse-ring 2s infinite;
+}
+@keyframes pulse-ring {
+  0% { transform: scale(0.8); opacity: 1; }
+  100% { transform: scale(2); opacity: 0; }
+}
+
+.fade-in {
+  animation: fadeIn 0.2s ease;
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.loading-bar {
+  animation: loadingBar 1.5s ease-in-out infinite;
+}
+@keyframes loadingBar {
+  0% { width: 0%; }
+  50% { width: 70%; }
+  100% { width: 100%; }
+}
+
+input[type="text"],
+input[type="password"] {
+  outline: none;
+}
+
+button {
+  cursor: pointer;
+}

@@ -1,0 +1,10 @@
+{
+  "description": "Empowering government officials, this AI-driven dashboard monitors infrastructure projects, identifies risks, and facilitates timely interventions for enhanced project management.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
