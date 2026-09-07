@@ -1,4 +1,6 @@
 import { useState, useEffect } from "react";
+import { onAuthStateChanged, signOut, type User } from "firebase/auth";
+import { auth } from "./firebase";
 import LoginScreen from "./screens/Login";
 import CommandCenter from "./screens/CommandCenter";
 import PriorityQueue from "./screens/PriorityQueue";
@@ -16,58 +18,98 @@ export type Screen =
   | "ai-risk-analysis";
 
 export default function App() {
-  const [screen, setScreen] = useState<Screen>("login");
+  const [screen, setScreen] = useState<Screen>("command-center");
   const [selectedProject, setSelectedProject] = useState<string | null>(null);
+  const [user, setUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [sessionAuthenticated, setSessionAuthenticated] = useState(false);
+
+  // Monitor Firebase Auth state safely
+  useEffect(() => {
+    if (!auth) {
+      setAuthLoading(false);
+      return;
+    }
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      if (currentUser) setSessionAuthenticated(true);
+      setAuthLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
 
   // Seed Firestore with all 182 CSV projects on first app load (after login).
-  // Fires on mount. Idempotent — skips if 182 docs already exist in Firestore.
-  // All progress is logged to the browser console under [NirmaanAI] prefix.
   useEffect(() => {
+    if (!user && !sessionAuthenticated) return;
     importProjectsIfNeeded()
-      .then(() => {
-        // Success is logged inside importProjectsIfNeeded() itself
-      })
+      .then(() => {})
       .catch((err: unknown) => {
-        // Failure is also logged inside importProjectsIfNeeded() — this is an extra surface.
-        const message =
-          err instanceof Error ? err.message : String(err);
-        console.error(
-          "[NirmaanAI] Import error surfaced in App — check Firestore security rules.\n" +
-          "Rules must allow read + write on /projects/{id} during development.\n" +
-          "Error:", message
-        );
+        const message = err instanceof Error ? err.message : String(err);
+        console.error("[NirmaanAI] Import error surfaced in App:", message);
       });
-  }, [screen]); // re-run if user navigates (e.g. logs out and back in)
+  }, [user, sessionAuthenticated]);
 
   const navigate = (s: Screen, project?: string) => {
     if (project) setSelectedProject(project);
     setScreen(s);
   };
 
-  if (screen === "login") {
-    return <LoginScreen onLogin={() => navigate("command-center")} />;
+  const handleSignOut = async () => {
+    setSessionAuthenticated(false);
+    if (auth) {
+      try {
+        await signOut(auth);
+      } catch (err) {
+        console.error("[NirmaanAI] Sign out error:", err);
+      }
+    }
+    setScreen("login");
+  };
+
+  if (authLoading) {
+    return (
+      <div className="h-full w-full flex items-center justify-center bg-slate-950 text-white">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+          <span className="text-xs text-slate-400 font-medium">Verifying Security Session…</span>
+        </div>
+      </div>
+    );
   }
+
+  if (!user && !sessionAuthenticated) {
+    return (
+      <LoginScreen
+        onLogin={() => {
+          setSessionAuthenticated(true);
+          setScreen("command-center");
+        }}
+      />
+    );
+  }
+
+  const activeScreen = screen === "login" ? "command-center" : screen;
 
   return (
     <div className="flex h-full bg-slate-50 font-sans">
-      <Sidebar current={screen} navigate={navigate} />
+      <Sidebar current={activeScreen} navigate={navigate} onSignOut={handleSignOut} />
       <main className="flex-1 overflow-auto">
-        {screen === "command-center" && (
+        {activeScreen === "command-center" && (
           <CommandCenter navigate={navigate} />
         )}
-        {screen === "priority-queue" && (
+        {activeScreen === "priority-queue" && (
           <PriorityQueue navigate={navigate} />
         )}
-        {screen === "risk-map" && (
+        {activeScreen === "risk-map" && (
           <RiskMap navigate={navigate} />
         )}
-        {screen === "project-overview" && (
+        {activeScreen === "project-overview" && (
           <ProjectOverview
             project={selectedProject}
             navigate={navigate}
           />
         )}
-        {screen === "ai-risk-analysis" && (
+        {activeScreen === "ai-risk-analysis" && (
           <AIRiskAnalysis project={selectedProject} navigate={navigate} />
         )}
       </main>
@@ -78,9 +120,11 @@ export default function App() {
 function Sidebar({
   current,
   navigate,
+  onSignOut,
 }: {
   current: Screen;
   navigate: (s: Screen) => void;
+  onSignOut: () => void;
 }) {
   const items = [
     { id: "command-center", label: "Command Center", icon: GridIcon },
@@ -175,8 +219,8 @@ function Sidebar({
           </div>
         </div>
         <button
-          onClick={() => navigate("login")}
-          className="mt-3 w-full text-xs py-1.5 rounded text-center font-medium"
+          onClick={onSignOut}
+          className="mt-3 w-full text-xs py-1.5 rounded text-center font-medium hover:bg-red-500/20 hover:text-red-300 transition-colors"
           style={{ color: "rgba(148,163,184,0.6)", background: "rgba(255,255,255,0.04)" }}
         >
           Sign Out

@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { signInWithEmailAndPassword } from "firebase/auth";
+import { auth } from "../firebase";
 
 export default function LoginScreen({ onLogin }: { onLogin: () => void }) {
   const [id, setId] = useState("");
@@ -6,7 +8,7 @@ export default function LoginScreen({ onLogin }: { onLogin: () => void }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!id || !password) {
       setError("Please enter your Official ID and Password.");
@@ -14,10 +16,44 @@ export default function LoginScreen({ onLogin }: { onLogin: () => void }) {
     }
     setError("");
     setLoading(true);
-    setTimeout(() => {
+
+    if (!auth) {
+      // In dev fallback mode if VITE_FIREBASE_API_KEY is not configured
+      setTimeout(() => {
+        setLoading(false);
+        onLogin();
+      }, 500);
+      return;
+    }
+
+    const email = id.includes("@") ? id.trim() : `${id.trim().toLowerCase()}@nirmaan.gov.in`;
+
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
       setLoading(false);
       onLogin();
-    }, 1400);
+    } catch (err: any) {
+      console.error("[LoginScreen] Firebase auth error:", err);
+      setLoading(false);
+      const code = err?.code || "";
+      if (code === "auth/operation-not-allowed") {
+        setError(
+          "Firebase Email/Password provider is not enabled in Firebase Console. Please enable Email/Password under Authentication -> Sign-in method."
+        );
+      } else if (code === "auth/invalid-api-key" || code === "auth/api-key-not-valid") {
+        setError("Invalid VITE_FIREBASE_API_KEY. Using development fallback.");
+        setTimeout(() => onLogin(), 1000);
+      } else if (
+        code === "auth/user-not-found" ||
+        code === "auth/wrong-password" ||
+        code === "auth/invalid-credential" ||
+        code === "auth/invalid-email"
+      ) {
+        setError("Invalid credentials. Please check your Official ID / Email and Password.");
+      } else {
+        setError(err?.message || "Failed to sign in. Please try again.");
+      }
+    }
   };
 
   return (

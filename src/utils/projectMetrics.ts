@@ -88,6 +88,30 @@ export function calculateBudgetMetrics(p: Project) {
 }
 
 /**
+ * Helper to compute Predicted Completion Date:
+ * Original Completion Date + predicted_delay_months
+ */
+export function calculatePredictedCompletionDate(
+  originalCompletionDate: string,
+  addlDelayMonths: number
+): string {
+  if (!originalCompletionDate) return "—";
+  try {
+    const d = new Date(originalCompletionDate);
+    if (isNaN(d.getTime())) return originalCompletionDate;
+    const daysToAdd = Math.round(addlDelayMonths * 30.4375);
+    d.setDate(d.getDate() + daysToAdd);
+    return d.toLocaleDateString("en-IN", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    });
+  } catch {
+    return originalCompletionDate;
+  }
+}
+
+/**
  * Requirement 5 & 6: Delay Terminology & Completed Projects
  * Distinctly labels Current Delay (historical) vs Predicted Additional Delay (FastAPI ML).
  * Handles completed projects gracefully.
@@ -100,24 +124,25 @@ export function calculateDelayMetrics(
 
   // Historical/Current Delay to date
   const currentDelayMonths = p.actualDelayMonths ?? 0;
-  const currentDelayStr =
-    currentDelayMonths > 0
-      ? `${currentDelayMonths.toFixed(1)} months`
-      : "On Schedule";
+  const currentDelayStr = isCompleted
+    ? (currentDelayMonths > 0 ? `${currentDelayMonths.toFixed(1)} months (Final Delay)` : "Completed On Schedule")
+    : (currentDelayMonths > 0 ? `${currentDelayMonths.toFixed(1)} months` : "On Schedule");
 
   // ML Predicted Additional Delay
-  const predictedDelayMonths = prediction?.predicted_delay_months ?? null;
-  const predictedAdditionalDelayStr =
-    predictedDelayMonths != null
-      ? predictedDelayMonths > 0
-        ? `${predictedDelayMonths.toFixed(1)} months`
-        : "On Schedule"
-      : null;
+  const predictedDelayMonths = isCompleted ? 0 : (prediction?.predicted_delay_months ?? null);
+  const predictedAdditionalDelayStr = isCompleted
+    ? "Completed"
+    : (predictedDelayMonths != null
+      ? (predictedDelayMonths > 0 ? `${predictedDelayMonths.toFixed(1)} months` : "On Schedule")
+      : null);
 
   // Completion dates
   const originalDate = p.originalCompletion || "—";
-  const revisedDate = p.revisedCompletion || originalDate;
-  const expectedCompletionStr = isCompleted ? "Project Completed" : revisedDate;
+  const expectedCompletionStr = isCompleted
+    ? "Project Completed"
+    : (predictedDelayMonths != null && p.originalCompletion
+      ? calculatePredictedCompletionDate(p.originalCompletion, predictedDelayMonths)
+      : (p.revisedCompletion || originalDate));
 
   return {
     isCompleted,

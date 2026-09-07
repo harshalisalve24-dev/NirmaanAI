@@ -1,3 +1,5 @@
+from pathlib import Path
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -5,15 +7,14 @@ import joblib
 import pandas as pd
 from risk_score import calculate_risk_score
 
-# Load the trained model
-model = joblib.load(
-    r"models\NirmaanAI_Final_RF_Regression (1).pkl"
-)
+BASE_DIR = Path(__file__).resolve().parent
 
-# Load the exact feature list used during training
-features = joblib.load(
-    r"models\NirmaanAI_ML_Features (1).pkl"
-)
+# Load the trained model & features using cross-platform paths
+model_path = BASE_DIR / "models" / "NirmaanAI_Final_RF_Regression (1).pkl"
+features_path = BASE_DIR / "models" / "NirmaanAI_ML_Features (1).pkl"
+
+model = joblib.load(model_path)
+features = joblib.load(features_path)
 
 app = FastAPI(
     title="NirmaanAI Risk Prediction API",
@@ -21,14 +22,9 @@ app = FastAPI(
     version="1.0"
 )
 
-origins = [
-    "http://localhost:8443",
-    "http://localhost:5173",
-]
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["*"],  # Allows requests from Vercel frontend and localhost
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

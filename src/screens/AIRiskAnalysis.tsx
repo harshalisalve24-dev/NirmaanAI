@@ -95,16 +95,48 @@ function buildAnalysis(p: Project, prediction: RiskPredictionResult | null) {
     return items;
   })();
 
-  // Generate a simple planned vs actual timeline based on progress
-  const stages = 5;
-  const timeline = Array.from({ length: stages }, (_, i) => {
-    const q = i + 1;
-    const plannedPct = Math.min(100, Math.round(p.physicalProgress + Math.abs(p.progressGap) + (i - stages + 1) * 8));
-    const actualPct = Math.min(100, Math.round(Math.max(0, p.physicalProgress - (stages - 1 - i) * Math.max(3, Math.abs(p.progressGap) / stages))));
+  // 5 equal chronological intervals of the project's ORIGINAL planned timeline
+  const startTs = new Date(p.sanctionDate || "2023-01-01").getTime();
+  let endTs = new Date(p.originalCompletion || "2026-12-31").getTime();
+  if (isNaN(endTs) || endTs <= startTs) {
+    endTs = startTs + (p.plannedDurationDays || 365) * 86400000;
+  }
+  const totalMs = Math.max(86400000 * 30, endTs - startTs);
+  const intervalMs = totalMs / 5;
+
+  // Active interval index corresponding to current physical progress observation
+  const activeIdx = Math.min(4, Math.max(0, Math.floor((p.physicalProgress / 100) * 5)));
+
+  const fmtRangeDate = (d: Date) =>
+    d.toLocaleDateString("en-IN", { month: "short", year: "2-digit" });
+
+  const timeline = Array.from({ length: 5 }, (_, i) => {
+    const pStart = new Date(startTs + i * intervalMs);
+    const pEnd = new Date(startTs + (i + 1) * intervalMs);
+    const periodLabel = `${fmtRangeDate(pStart)} – ${fmtRangeDate(pEnd)}`;
+    const planned = Math.round((i + 1) * 20); // 20%, 40%, 60%, 80%, 100% cumulative
+
+    const isCurrentObservation = i === activeIdx;
+    const actual = isCurrentObservation ? p.physicalProgress : null;
+
+    let varianceText = "";
+    if (isCurrentObservation) {
+      const diff = Math.round((p.physicalProgress - planned) * 10) / 10;
+      if (diff > 0) {
+        varianceText = `${diff.toFixed(1)} pp ahead of target`;
+      } else if (diff < 0) {
+        varianceText = `${Math.abs(diff).toFixed(1)} pp behind target`;
+      } else {
+        varianceText = "On target";
+      }
+    }
+
     return {
-      month: `Period ${q}`,
-      planned: Math.max(actualPct + 2, plannedPct),
-      actual: actualPct,
+      periodLabel,
+      planned,
+      actual,
+      isCurrentObservation,
+      varianceText,
     };
   });
 
@@ -409,43 +441,72 @@ export default function AIRiskAnalysis({
 
         {/* Progress timeline */}
         <div className="bg-white rounded-xl border border-slate-200 p-5" style={{ boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-semibold text-slate-800 text-sm">Planned vs Actual Progress</h3>
+          <div className="flex items-center justify-between mb-1">
+            <h3 className="font-semibold text-slate-800 text-sm">Planned Cumulative Progress vs Current Actual Progress</h3>
             <div className="flex items-center gap-3 text-xs text-slate-500">
               <span className="flex items-center gap-1">
-                <div className="w-3 h-0.5 bg-blue-500 rounded" />
-                Planned
+                <div className="w-3 h-1 bg-blue-500 rounded" />
+                Planned Target
               </span>
               <span className="flex items-center gap-1">
-                <div className="w-3 h-0.5 bg-red-400 rounded" />
-                Actual
+                <div className="w-3 h-1 bg-emerald-500 rounded" />
+                Current Actual Progress
               </span>
             </div>
           </div>
-          <div className="space-y-3">
+          <p className="text-xs text-slate-400 mb-4">
+            Five equal intervals of the project's original planned timeline.
+          </p>
+
+          <div className="space-y-4">
             {data.timeline.map((t, i) => (
-              <div key={i} className="flex items-center gap-4">
-                <div className="text-xs text-slate-500 w-16 flex-shrink-0">{t.month}</div>
-                <div className="flex-1 flex flex-col gap-1">
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                      <div className="h-full rounded-full bg-blue-400" style={{ width: `${t.planned}%` }} />
-                    </div>
-                    <span className="text-xs text-blue-500 w-8 text-right">{t.planned}%</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                      <div className="h-full rounded-full bg-red-400" style={{ width: `${t.actual}%` }} />
-                    </div>
-                    <span className="text-xs text-red-500 w-8 text-right">{t.actual}%</span>
-                  </div>
+              <div key={i} className="flex items-start gap-4 p-2.5 rounded-lg hover:bg-slate-50 transition-colors">
+                <div className="text-xs font-semibold text-slate-700 w-32 flex-shrink-0 pt-0.5">
+                  <div className="text-[10px] uppercase text-slate-400 font-bold">Interval {i + 1}</div>
+                  <div>{t.periodLabel}</div>
                 </div>
-                <div
-                  className="text-xs font-semibold w-16 text-right flex-shrink-0"
-                  style={{ color: t.planned - t.actual > 10 ? "#dc2626" : "#d97706" }}
-                >
-                  -{t.planned - t.actual}%
+                <div className="flex-1 flex flex-col gap-1.5 pt-0.5">
+                  {/* Planned Cumulative Target */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-slate-400 w-16 font-mono">Planned</span>
+                    <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
+                      <div className="h-full rounded-full bg-blue-500" style={{ width: `${t.planned}%` }} />
+                    </div>
+                    <span className="text-xs font-semibold text-blue-600 w-10 text-right">{t.planned}%</span>
+                  </div>
+
+                  {/* Current Actual Observation */}
+                  {t.isCurrentObservation ? (
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-emerald-600 font-semibold w-16 font-mono">Actual</span>
+                      <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
+                        <div className="h-full rounded-full bg-emerald-500" style={{ width: `${t.actual}%` }} />
+                      </div>
+                      <span className="text-xs font-bold text-emerald-700 w-10 text-right">{t.actual}%</span>
+                    </div>
+                  ) : (
+                    <div className="text-[10px] text-slate-400 italic pl-18">
+                      No progress snapshot for this interval
+                    </div>
+                  )}
                 </div>
+
+                {t.isCurrentObservation && (
+                  <div className="flex flex-col items-end justify-center flex-shrink-0 w-36">
+                    <span className="text-[10px] text-slate-400 uppercase font-bold">Progress Variance</span>
+                    <span
+                      className={`text-xs font-bold px-2 py-0.5 rounded-md border mt-0.5 ${
+                        t.varianceText.includes("ahead")
+                          ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                          : t.varianceText.includes("behind")
+                          ? "bg-amber-50 text-amber-700 border-amber-200"
+                          : "bg-slate-50 text-slate-700 border-slate-200"
+                      }`}
+                    >
+                      {t.varianceText}
+                    </span>
+                  </div>
+                )}
               </div>
             ))}
           </div>
