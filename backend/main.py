@@ -9,12 +9,26 @@ from risk_score import calculate_risk_score
 
 BASE_DIR = Path(__file__).resolve().parent
 
-# Load the trained model & features using cross-platform paths
-model_path = BASE_DIR / "models" / "NirmaanAI_Final_RF_Regression (1).pkl"
-features_path = BASE_DIR / "models" / "NirmaanAI_ML_Features (1).pkl"
+def get_model_path():
+    p1 = BASE_DIR / "models" / "NirmaanAI_Final_RF_Regression.pkl"
+    p2 = BASE_DIR / "models" / "NirmaanAI_Final_RF_Regression (1).pkl"
+    p3 = BASE_DIR / "models" / "NirmaanAI_Final_RF_Regression_Improved.pkl"
+    for p in (p1, p2, p3):
+        if p.exists():
+            return p
+    raise FileNotFoundError("No trained Random Forest model pickle file found in models/")
 
-model = joblib.load(model_path)
-features = joblib.load(features_path)
+def get_features_path():
+    p1 = BASE_DIR / "models" / "NirmaanAI_ML_Features.pkl"
+    p2 = BASE_DIR / "models" / "NirmaanAI_ML_Features (1).pkl"
+    p3 = BASE_DIR / "models" / "NirmaanAI_ML_Features_Improved.pkl"
+    for p in (p1, p2, p3):
+        if p.exists():
+            return p
+    raise FileNotFoundError("No feature list pickle file found in models/")
+
+model = joblib.load(get_model_path())
+features = joblib.load(get_features_path())
 
 app = FastAPI(
     title="NirmaanAI Risk Prediction API",
@@ -22,9 +36,16 @@ app = FastAPI(
     version="1.0"
 )
 
+origins = [
+    "http://localhost:8443",
+    "http://localhost:5173",
+    "http://localhost:8000",
+    "https://nirmaan-ai-dusky.vercel.app",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows requests from Vercel frontend and localhost
+    allow_origins=["*"],  # Allows requests from Vercel production frontend and localhost
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
