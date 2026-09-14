@@ -49,8 +49,12 @@ export default function App() {
       });
   }, [user, sessionAuthenticated]);
 
-  const navigate = (s: Screen, project?: string) => {
+  const [selectedRiskFilter, setSelectedRiskFilter] = useState<string>("All");
+
+  const navigate = (s: Screen, project?: string, filter?: string) => {
     if (project) setSelectedProject(project);
+    if (filter) setSelectedRiskFilter(filter);
+    else if (s === "priority-queue" && !filter) setSelectedRiskFilter("All");
     setScreen(s);
   };
 
@@ -98,7 +102,11 @@ export default function App() {
           <CommandCenter navigate={navigate} />
         )}
         {activeScreen === "priority-queue" && (
-          <PriorityQueue navigate={navigate} />
+          <PriorityQueue
+            navigate={navigate}
+            initialRiskFilter={selectedRiskFilter}
+            onFilterChange={setSelectedRiskFilter}
+          />
         )}
         {activeScreen === "risk-map" && (
           <RiskMap navigate={navigate} />

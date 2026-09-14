@@ -4,23 +4,43 @@ import type { Project } from "../types/project";
 import { getProjectsCached } from "../services/projectService";
 import { predictProjectsRiskBatch, type RiskPredictionResult } from "../services/apiService";
 
-const RISKS = ["All", "Critical", "High", "Medium", "Low"];
+interface PriorityQueueProps {
+  navigate: (s: Screen, project?: string, filter?: string) => void;
+  initialRiskFilter?: string;
+  onFilterChange?: (filter: string) => void;
+}
+
+const RISKS = ["All", "Critical", "High", "Med / Low", "Medium", "Low"];
 
 const riskColors: Record<string, string> = {
   Critical: "#dc2626",
   High: "#ea580c",
+  "Med / Low": "#16a34a",
   Medium: "#d97706",
   Low: "#16a34a",
 };
 
-export default function PriorityQueue({ navigate }: { navigate: (s: Screen, project?: string) => void }) {
+export default function PriorityQueue({
+  navigate,
+  initialRiskFilter = "All",
+  onFilterChange,
+}: PriorityQueueProps) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [predictions, setPredictions] = useState<Map<string, RiskPredictionResult>>(new Map());
   const [loading, setLoading] = useState(true);
-  const [riskFilter, setRiskFilter] = useState("All");
+  const [riskFilter, setRiskFilter] = useState(initialRiskFilter);
   const [sectorFilter, setSectorFilter] = useState("All");
   const [ministryFilter, setMinistryFilter] = useState("All");
   const [sortBy, setSortBy] = useState<"priority" | "predictedDelayMonths" | "physicalProgress">("priority");
+
+  useEffect(() => {
+    setRiskFilter(initialRiskFilter);
+  }, [initialRiskFilter]);
+
+  const handleRiskFilterChange = (f: string) => {
+    setRiskFilter(f);
+    if (onFilterChange) onFilterChange(f);
+  };
 
   useEffect(() => {
     getProjectsCached()
@@ -57,7 +77,12 @@ export default function PriorityQueue({ navigate }: { navigate: (s: Screen, proj
       .filter((p) => {
         const pred = predictions.get(p.id);
         const effectiveRisk = pred?.risk_level ?? p.risk ?? "Medium";
-        if (riskFilter !== "All" && effectiveRisk !== riskFilter) return false;
+
+        if (riskFilter === "Critical" && effectiveRisk !== "Critical") return false;
+        if (riskFilter === "High" && effectiveRisk !== "High") return false;
+        if (riskFilter === "Medium" && effectiveRisk !== "Medium") return false;
+        if (riskFilter === "Low" && effectiveRisk !== "Low") return false;
+        if (riskFilter === "Med / Low" && effectiveRisk !== "Medium" && effectiveRisk !== "Low") return false;
         if (sectorFilter !== "All" && p.sector !== sectorFilter) return false;
         if (ministryFilter !== "All" && p.ministry !== ministryFilter) return false;
         return true;
@@ -83,13 +108,24 @@ export default function PriorityQueue({ navigate }: { navigate: (s: Screen, proj
       });
   }, [projects, predictions, riskFilter, sectorFilter, ministryFilter, sortBy]);
 
+  const pageTitle =
+    riskFilter === "Critical"
+      ? `Critical Projects (${filtered.length})`
+      : riskFilter === "High"
+      ? `High Risk Projects (${filtered.length})`
+      : riskFilter === "Med / Low"
+      ? `Med / Low Risk Projects (${filtered.length})`
+      : riskFilter !== "All"
+      ? `${riskFilter} Risk Projects (${filtered.length})`
+      : `All Projects (${filtered.length})`;
+
   return (
     <div className="min-h-full bg-slate-50 fade-in">
       {/* Header */}
       <div className="bg-white border-b border-slate-200 px-8 py-5">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="font-display font-bold text-slate-900 text-xl">Priority Queue</h1>
+            <h1 className="font-display font-bold text-slate-900 text-xl">{pageTitle}</h1>
             <p className="text-sm text-slate-500 mt-0.5">
               {loading ? "Loading…" : `${filtered.length} of ${projects.length} projects · Ranked by urgency and risk severity`}
             </p>
@@ -114,7 +150,7 @@ export default function PriorityQueue({ navigate }: { navigate: (s: Screen, proj
 
         {/* Filters */}
         <div className="flex items-center gap-4 mt-4 flex-wrap">
-          <FilterGroup label="Risk" options={RISKS} value={riskFilter} onChange={setRiskFilter} accentMap={riskColors} />
+          <FilterGroup label="Risk" options={RISKS} value={riskFilter} onChange={handleRiskFilterChange} accentMap={riskColors} />
           <FilterGroup label="Sector" options={sectors} value={sectorFilter} onChange={setSectorFilter} />
           <FilterGroup label="Ministry" options={ministries.slice(0, 8)} value={ministryFilter} onChange={setMinistryFilter} />
         </div>

@@ -47,7 +47,7 @@ const sectorBreakdown = [
   { sector: "Mining", total: 91, critical: 1, color: "#6366f1" },
 ];
 
-export default function CommandCenter({ navigate }: { navigate: (s: Screen, project?: string) => void }) {
+export default function CommandCenter({ navigate }: { navigate: (s: Screen, project?: string, filter?: string) => void }) {
   const [search, setSearch] = useState("");
   const [showNotif, setShowNotif] = useState(false);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -244,14 +244,15 @@ export default function CommandCenter({ navigate }: { navigate: (s: Screen, proj
         {/* KPI Cards */}
         <div className="grid grid-cols-4 gap-4 mb-6">
           {[
-            { label: "Total Projects", value: totalProjectsCount ? totalProjectsCount.toLocaleString("en-IN") : "...", sub: "Active Firestore database", color: "#2563eb", bg: "#eff6ff", border: "#bfdbfe" },
-            { label: "Critical Projects", value: String(criticalCount), sub: "FastAPI Risk Score > 70", color: "#dc2626", bg: "#fef2f2", border: "#fecaca" },
-            { label: "High Risk", value: String(highCount), sub: "FastAPI Risk Score 50–70", color: "#ea580c", bg: "#fff7ed", border: "#fed7aa" },
-            { label: "Med / Low Risk", value: String(medLowCount), sub: "FastAPI Risk Score < 50", color: "#16a34a", bg: "#f0fdf4", border: "#bbf7d0" },
+            { label: "Total Projects", filter: "All", value: totalProjectsCount ? totalProjectsCount.toLocaleString("en-IN") : "...", sub: "Active Firestore database", color: "#2563eb", bg: "#eff6ff", border: "#bfdbfe" },
+            { label: "Critical Projects", filter: "Critical", value: String(criticalCount), sub: "FastAPI Risk Score > 70", color: "#dc2626", bg: "#fef2f2", border: "#fecaca" },
+            { label: "High Risk", filter: "High", value: String(highCount), sub: "FastAPI Risk Score 50–70", color: "#ea580c", bg: "#fff7ed", border: "#fed7aa" },
+            { label: "Med / Low Risk", filter: "Med / Low", value: String(medLowCount), sub: "FastAPI Risk Score < 50", color: "#16a34a", bg: "#f0fdf4", border: "#bbf7d0" },
           ].map((k) => (
-            <div
+            <button
               key={k.label}
-              className="bg-white rounded-xl p-5 border card-hover"
+              onClick={() => navigate("priority-queue", undefined, k.filter)}
+              className="bg-white rounded-xl p-5 border text-left cursor-pointer transition-all duration-200 hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 card-hover"
               style={{ borderColor: k.border, boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}
             >
               <div
@@ -262,7 +263,7 @@ export default function CommandCenter({ navigate }: { navigate: (s: Screen, proj
               </div>
               <div className="font-display font-bold text-slate-900 text-3xl mb-1">{k.value}</div>
               <div className="text-xs text-slate-500">{k.sub}</div>
-            </div>
+            </button>
           ))}
         </div>
 
