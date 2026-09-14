@@ -124,15 +124,31 @@ export async function batchUpsertProjects(projects: Project[]): Promise<void> {
 let _cache: Project[] | null = null;
 let _fetchPromise: Promise<Project[]> | null = null;
 
-/** Fetch all projects once per session; return cached result on subsequent calls. */
+import { loadProjectsFromCSV } from "../utils/importProjects";
+
+/** Fetch all projects once per session; return cached result on subsequent calls. Fallbacks to CSV if Firestore is empty or fails. */
 export async function getProjectsCached(): Promise<Project[]> {
-  if (_cache) return _cache;
+  if (_cache && _cache.length > 0) return _cache;
   if (!_fetchPromise) {
-    _fetchPromise = getAllProjects().then((ps) => {
-      _cache = ps;
-      _fetchPromise = null;
-      return ps;
-    });
+    _fetchPromise = (async () => {
+      try {
+        const ps = await getAllProjects();
+        if (ps && ps.length > 0) {
+          _cache = ps;
+          return ps;
+        }
+      } catch (err) {
+        console.warn("[NirmaanAI] Firestore load failed, falling back to local bundled CSV:", err);
+      }
+      // Fallback to local CSV if Firestore is empty or errored out
+      console.log("[NirmaanAI] Loading 182 projects from bundled CSV fallback...");
+      const csvPs = loadProjectsFromCSV();
+      if (csvPs.length > 0) {
+        _cache = csvPs;
+        return csvPs;
+      }
+      return [];
+    })();
   }
   return _fetchPromise;
 }

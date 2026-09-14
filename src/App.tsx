@@ -32,7 +32,7 @@ export default function App() {
     }
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
-      if (currentUser) setSessionAuthenticated(true);
+      setSessionAuthenticated(Boolean(currentUser));
       setAuthLoading(false);
     });
     return () => unsubscribe();

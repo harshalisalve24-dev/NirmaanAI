@@ -1,12 +1,16 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { auth } from "../firebase";
+import { getPublicDatasetStats } from "../utils/importProjects";
 
 export default function LoginScreen({ onLogin }: { onLogin: () => void }) {
   const [id, setId] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  // Dynamically compute real dataset statistics for public display
+  const stats = useMemo(() => getPublicDatasetStats(), []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -18,11 +22,8 @@ export default function LoginScreen({ onLogin }: { onLogin: () => void }) {
     setLoading(true);
 
     if (!auth) {
-      // In dev fallback mode if VITE_FIREBASE_API_KEY is not configured
-      setTimeout(() => {
-        setLoading(false);
-        onLogin();
-      }, 500);
+      setLoading(false);
+      setError("Firebase Authentication is not configured.");
       return;
     }
 
@@ -40,18 +41,15 @@ export default function LoginScreen({ onLogin }: { onLogin: () => void }) {
         setError(
           "Firebase Email/Password provider is not enabled in Firebase Console. Please enable Email/Password under Authentication -> Sign-in method."
         );
-      } else if (code === "auth/invalid-api-key" || code === "auth/api-key-not-valid") {
-        setError("Invalid VITE_FIREBASE_API_KEY. Using development fallback.");
-        setTimeout(() => onLogin(), 1000);
       } else if (
         code === "auth/user-not-found" ||
         code === "auth/wrong-password" ||
         code === "auth/invalid-credential" ||
         code === "auth/invalid-email"
       ) {
-        setError("Invalid credentials. Please check your Official ID / Email and Password.");
+        setError("Invalid Official ID or password.");
       } else {
-        setError(err?.message || "Failed to sign in. Please try again.");
+        setError("Invalid Official ID or password.");
       }
     }
   };
@@ -133,9 +131,9 @@ export default function LoginScreen({ onLogin }: { onLogin: () => void }) {
 
           <div className="mt-10 grid grid-cols-3 gap-4">
             {[
-              { label: "Projects Monitored", value: "1,247" },
-              { label: "States Covered", value: "28" },
-              { label: "Sectors", value: "6" },
+              { label: "Projects Monitored", value: stats.totalProjects.toLocaleString("en-IN") },
+              { label: "States Covered", value: String(stats.statesCount) },
+              { label: "Sectors", value: String(stats.sectorsCount) },
             ].map((s) => (
               <div
                 key={s.label}

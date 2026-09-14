@@ -29,17 +29,15 @@ try {
 // Firestore instance — used by all project service functions.
 export const db: Firestore = getFirestore(app);
 
-// Firebase Auth instance — safely initialized so missing env vars don't crash the bundle.
+// Firebase Auth instance — safely initialized from app.
 let authInstance: Auth | null = null;
 try {
-  if (apiKey) {
-    authInstance = getAuth(app);
-  }
+  authInstance = getAuth(app);
 } catch (e) {
   console.warn("[NirmaanAI] Firebase Auth initialization warning:", e);
 }
 
 export const auth = authInstance;
-export const isFirebaseAuthConfigured = Boolean(apiKey && authInstance);
+export const isFirebaseAuthConfigured = Boolean(authInstance);
 
 export default app;
