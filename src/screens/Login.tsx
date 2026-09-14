@@ -435,7 +435,7 @@ export default function LoginScreen({ onLogin }: { onLogin: () => void }) {
           </div>
 
           <div className="mt-6 text-center text-xs" style={{ color: "rgba(148,163,184,0.3)" }}>
-            NirmaanAI v2.4.1 · Government of India
+            NirmaanAI v2.4.2 · Government of India
           </div>
         </div>
       </div>
