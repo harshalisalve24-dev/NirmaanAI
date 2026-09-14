@@ -9,13 +9,13 @@ import { getAuth, type Auth } from "firebase/auth";
 const apiKey = import.meta.env.VITE_FIREBASE_API_KEY as string | undefined;
 
 const firebaseConfig = {
-  apiKey: apiKey || "AIzaSyDummyKeyForDevEnvironment1234567890",
-  authDomain: (import.meta.env.VITE_FIREBASE_AUTH_DOMAIN as string) || "nirmaan-ai.firebaseapp.com",
-  projectId: (import.meta.env.VITE_FIREBASE_PROJECT_ID as string) || "nirmaan-ai",
-  storageBucket: (import.meta.env.VITE_FIREBASE_STORAGE_BUCKET as string) || "nirmaan-ai.appspot.com",
-  messagingSenderId: (import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID as string) || "123456789",
-  appId: (import.meta.env.VITE_FIREBASE_APP_ID as string) || "1:123456789:web:abcdef123456",
-  measurementId: (import.meta.env.VITE_FIREBASE_MEASUREMENT_ID as string) || "",
+  apiKey: apiKey || "AIzaSyDVPWZxZnsEvOW2NtPgTQy6w4avlVNzujc",
+  authDomain: (import.meta.env.VITE_FIREBASE_AUTH_DOMAIN as string) || "nirmaanai-40ae5.firebaseapp.com",
+  projectId: (import.meta.env.VITE_FIREBASE_PROJECT_ID as string) || "nirmaanai-40ae5",
+  storageBucket: (import.meta.env.VITE_FIREBASE_STORAGE_BUCKET as string) || "nirmaanai-40ae5.firebasestorage.app",
+  messagingSenderId: (import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID as string) || "895542994776",
+  appId: (import.meta.env.VITE_FIREBASE_APP_ID as string) || "1:895542994776:web:e4cb366088a1049306672d",
+  measurementId: (import.meta.env.VITE_FIREBASE_MEASUREMENT_ID as string) || "G-W2W6SJCPK9",
 };
 
 let app: FirebaseApp;
