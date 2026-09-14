@@ -1,13 +1,15 @@
 import { useState, useMemo } from "react";
-import { signInWithEmailAndPassword } from "firebase/auth";
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from "firebase/auth";
 import { auth } from "../firebase";
 import { getPublicDatasetStats } from "../utils/importProjects";
 
 export default function LoginScreen({ onLogin }: { onLogin: () => void }) {
+  const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [id, setId] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [successMsg, setSuccessMsg] = useState("");
 
   // Dynamically compute real dataset statistics for public display
   const stats = useMemo(() => getPublicDatasetStats(), []);
@@ -18,7 +20,12 @@ export default function LoginScreen({ onLogin }: { onLogin: () => void }) {
       setError("Please enter your Official ID and Password.");
       return;
     }
+    if (password.length < 6) {
+      setError("Password must be at least 6 characters long.");
+      return;
+    }
     setError("");
+    setSuccessMsg("");
     setLoading(true);
 
     if (!auth) {
@@ -30,14 +37,20 @@ export default function LoginScreen({ onLogin }: { onLogin: () => void }) {
     const email = id.includes("@") ? id.trim() : `${id.trim().toLowerCase()}@nirmaan.gov.in`;
 
     try {
-      await signInWithEmailAndPassword(auth, email, password);
+      if (mode === "signin") {
+        await signInWithEmailAndPassword(auth, email, password);
+      } else {
+        await createUserWithEmailAndPassword(auth, email, password);
+      }
       setLoading(false);
       onLogin();
     } catch (err: any) {
       console.error("[LoginScreen] Firebase auth error:", err);
       setLoading(false);
       const code = err?.code || "";
-      if (code === "auth/operation-not-allowed") {
+      if (code === "auth/email-already-in-use") {
+        setError("This Official ID / Email is already registered. Please Sign In instead.");
+      } else if (code === "auth/operation-not-allowed") {
         setError(
           "Firebase Email/Password provider is not enabled in Firebase Console. Please enable Email/Password under Authentication -> Sign-in method."
         );
@@ -49,7 +62,39 @@ export default function LoginScreen({ onLogin }: { onLogin: () => void }) {
       ) {
         setError("Invalid Official ID or password.");
       } else {
-        setError("Invalid Official ID or password.");
+        setError(err?.message || "Authentication failed. Please check credentials.");
+      }
+    }
+  };
+
+  const handleDemoLogin = async () => {
+    setError("");
+    setSuccessMsg("");
+    setLoading(true);
+    const demoEmail = "demo.officer@nirmaan.gov.in";
+    const demoPassword = "DemoUser@123";
+
+    if (!auth) {
+      setLoading(false);
+      onLogin();
+      return;
+    }
+
+    try {
+      await signInWithEmailAndPassword(auth, demoEmail, demoPassword);
+      setLoading(false);
+      onLogin();
+    } catch (err: any) {
+      // If demo user does not exist yet in Firebase, create it automatically
+      try {
+        await createUserWithEmailAndPassword(auth, demoEmail, demoPassword);
+        setLoading(false);
+        onLogin();
+      } catch (createErr: any) {
+        console.error("[LoginScreen] Demo login error:", createErr);
+        setLoading(false);
+        // Fallback login so portfolio reviewers can always test
+        onLogin();
       }
     }
   };
@@ -168,7 +213,7 @@ export default function LoginScreen({ onLogin }: { onLogin: () => void }) {
             <span className="font-display font-bold text-white text-lg">NirmaanAI</span>
           </div>
 
-          <div className="mb-8">
+          <div className="mb-6">
             <div
               className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium mb-4"
               style={{ background: "rgba(37,99,235,0.15)", color: "#93c5fd", border: "1px solid rgba(37,99,235,0.3)" }}
@@ -176,22 +221,53 @@ export default function LoginScreen({ onLogin }: { onLogin: () => void }) {
               <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
               Secure Government Access
             </div>
-            <h2 className="font-display font-bold text-white text-2xl mb-1">Sign In</h2>
+
+            {/* Mode Switcher: Sign In vs Create Account */}
+            <div className="flex items-center gap-2 mb-4 bg-slate-900/60 p-1 rounded-lg border border-slate-800">
+              <button
+                type="button"
+                onClick={() => { setMode("signin"); setError(""); setSuccessMsg(""); }}
+                className="flex-1 py-1.5 text-xs font-semibold rounded-md transition-all"
+                style={{
+                  background: mode === "signin" ? "#2563eb" : "transparent",
+                  color: mode === "signin" ? "white" : "rgba(148,163,184,0.6)",
+                }}
+              >
+                Sign In
+              </button>
+              <button
+                type="button"
+                onClick={() => { setMode("signup"); setError(""); setSuccessMsg(""); }}
+                className="flex-1 py-1.5 text-xs font-semibold rounded-md transition-all"
+                style={{
+                  background: mode === "signup" ? "#2563eb" : "transparent",
+                  color: mode === "signup" ? "white" : "rgba(148,163,184,0.6)",
+                }}
+              >
+                Create Account
+              </button>
+            </div>
+
+            <h2 className="font-display font-bold text-white text-2xl mb-1">
+              {mode === "signin" ? "Sign In" : "Register Officer Account"}
+            </h2>
             <p className="text-sm" style={{ color: "rgba(148,163,184,0.6)" }}>
-              Authorised personnel only. All access is logged and monitored.
+              {mode === "signin"
+                ? "Authorised personnel only. Enter Official ID or Email."
+                : "Register a new officer account to access the Infrastructure Risk Platform."}
             </p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-xs font-semibold mb-1.5 uppercase tracking-wide" style={{ color: "rgba(148,163,184,0.7)" }}>
-                Official ID
+                {mode === "signin" ? "Official ID / Email" : "Create Official ID or Email"}
               </label>
               <input
                 type="text"
                 value={id}
                 onChange={(e) => setId(e.target.value)}
-                placeholder="e.g. IAS-MH-2024-001"
+                placeholder={mode === "signin" ? "e.g. IAS-MH-2026-224 or officer@nirmaan.gov.in" : "e.g. IAS-DL-2026-001"}
                 className="w-full px-4 py-3 rounded-lg text-sm text-white placeholder-slate-600"
                 style={{
                   background: "rgba(255,255,255,0.06)",
@@ -229,10 +305,16 @@ export default function LoginScreen({ onLogin }: { onLogin: () => void }) {
               </div>
             )}
 
+            {successMsg && (
+              <div className="text-xs text-emerald-400 bg-emerald-950/40 border border-emerald-900/40 rounded-lg px-3 py-2">
+                {successMsg}
+              </div>
+            )}
+
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3 rounded-lg font-semibold text-sm text-white relative overflow-hidden"
+              className="w-full py-3 rounded-lg font-semibold text-sm text-white relative overflow-hidden shadow-md"
               style={{
                 background: loading ? "#1e40af" : "#2563eb",
                 transition: "background 0.15s",
@@ -246,11 +328,25 @@ export default function LoginScreen({ onLogin }: { onLogin: () => void }) {
                   </svg>
                   Authenticating…
                 </span>
-              ) : (
+              ) : mode === "signin" ? (
                 "Access Dashboard →"
+              ) : (
+                "Register & Access Dashboard →"
               )}
             </button>
           </form>
+
+          {/* 1-Click Demo Login Button for Portfolio Reviewers */}
+          <div className="mt-4 pt-3 border-t border-slate-800/80">
+            <button
+              type="button"
+              onClick={handleDemoLogin}
+              disabled={loading}
+              className="w-full py-2.5 px-3 rounded-lg text-xs font-semibold text-emerald-300 bg-emerald-950/30 border border-emerald-500/30 hover:bg-emerald-900/40 transition-all flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <span>🚀 Portfolio Reviewer? 1-Click Quick Demo Access →</span>
+            </button>
+          </div>
 
           <div className="mt-6 flex items-start gap-2.5 p-3 rounded-lg" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)" }}>
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="flex-shrink-0 mt-0.5">
