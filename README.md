@@ -1,135 +1,128 @@
-# NirmaanAI 🏗️
+# NirmaanAI — Infrastructure Risk Early-Warning Platform
 
-## AI-Powered Infrastructure Risk & Early Warning System
+> **AI-Powered Early-Warning & Risk Prediction System for Infrastructure Mega-Projects Across India**
 
-NirmaanAI is an AI/ML-powered platform designed to help monitor large infrastructure projects and identify projects that may be at risk of delays.
+[![Frontend](https://img.shields.io/badge/Vercel-Frontend%20Live-000000?style=for-the-badge&logo=vercel&logoColor=white)](https://nirmaan-ai-dusky.vercel.app)
+[![Backend](https://img.shields.io/badge/FastAPI-ML%20API%20Live-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://nirmaanai-backend.onrender.com/docs)
+[![Python](https://img.shields.io/badge/Python-3.13-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![React](https://img.shields.io/badge/React-19.0-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev/)
 
-Instead of only showing what has already happened, NirmaanAI uses historical project data and current project indicators to **predict expected schedule delay, calculate project risk, prioritize projects, and support early intervention.**
+---
 
-## 🎯 Problem
+## 📌 Executive Summary
 
-Large infrastructure projects such as roads, railways, airports, urban transport, energy, and water projects can face delays due to:
+**NirmaanAI** is an enterprise-grade infrastructure risk management command center built for senior ministry officials and project engineers. It monitors **182+ government infrastructure projects** (highways, railways, metro lines, bridges, and power grids) across India, using Machine Learning (Random Forest Regression) to predict schedule delays in months and calculate composite risk scores before costly overruns occur.
 
-- Slow physical progress
-- High expenditure compared to physical execution
-- Budget pressure
-- Long project durations
-- Contractor and execution issues
+---
 
-Traditional monitoring is often reactive. NirmaanAI aims to make infrastructure monitoring more **predictive and proactive**.
+## ✨ Key Features
 
-## 💡 Solution
+- 📊 **Infrastructure Risk Command Center**: Real-time KPI dashboard tracking total projects, critical delay risks, sector overviews, and early warning indicators.
+- 🤖 **Machine Learning Delay Prediction**: FastAPI-powered Random Forest Regressor trained on 10 historical project parameters (cost, expenditure %, physical progress, progress gap, sector, agency, planned duration).
+- 🧮 **Composite Risk Scoring Formula**: Weighted risk calculation ($0.60 \times R_{\text{delay}} + 0.25 \times R_{\text{gap}} + 0.15 \times R_{\text{budget}}$) categorizing projects into *Low*, *Medium*, *High*, and *Critical*.
+- 🎯 **Interactive Summary Card Filtering**: 1-click dashboard summary cards filtering project lists directly by risk severity.
+- 🗺️ **Geospatial Risk Map**: Interactive map of India visualizing high-risk project clusters by state and sector.
+- 📋 **Priority Queue & Project Deep Dives**: Detailed project profiles with financial metrics, milestone timelines, risk factors, and actionable intervention assignments.
+- 🔐 **Firebase Authentication & Access Control**: Secure Email/Password authentication, protected dashboard routes, self-registration mode, and **1-Click Portfolio Demo Access**.
 
-NirmaanAI provides a centralized infrastructure risk monitoring system that enables officials to:
+---
 
-- Monitor infrastructure projects
-- Identify high-risk projects
-- Predict expected schedule delay
-- Calculate project risk scores
-- Compare planned and actual progress
-- Analyze budget utilization
-- Prioritize projects requiring attention
-- Create and track interventions
-- Monitor project risk through a centralized dashboard
+## 🛠️ Technology Stack
 
-## 🤖 Machine Learning
+### Frontend
+- **Framework**: React 19 + TypeScript + Vite
+- **Styling**: Tailwind CSS v4
+- **Charts & Data Viz**: Recharts
+- **Database & Auth**: Firebase Auth + Cloud Firestore
 
-The system uses a **Random Forest Regression** model to estimate expected schedule delay.
+### Backend & Machine Learning
+- **API Framework**: FastAPI + Uvicorn
+- **ML Libraries**: Scikit-Learn (`1.6.1`), Joblib, Pandas, NumPy
+- **ML Model**: Random Forest Regressor (`NirmaanAI_Final_RF_Regression.pkl`)
+- **Python Version**: Python 3.13.1
 
-The model uses historical-safe project features including:
+### Cloud Infrastructure & Hosting
+- **Frontend Hosting**: Vercel
+- **Backend Hosting**: Render (Linux Container)
+- **Database Hosting**: Google Cloud Firestore
 
-- Original Cost
-- Expenditure
-- Physical Progress
-- Expenditure %
-- Remaining Budget
-- Progress Gap
-- Planned Duration
-- Sector
-- Line Ministry
-- Implementing Agency
+---
 
-### Model Performance
+## 📊 Risk Score Formula
 
-The final model achieved approximately:
+The NirmaanAI Risk Score ($0 \text{ to } 100$) is computed dynamically using:
 
-- **MAE:** 12.8 months
-- **RMSE:** 17.3 months
-- **R²:** 0.29
+$$\text{Risk Score} = 0.60 \cdot R_{\text{Delay}} + 0.25 \cdot R_{\text{Gap}} + 0.15 \cdot R_{\text{BudgetPressure}}$$
 
-The model is intended as a **prototype decision-support system** and not as an exact forecasting system.
+Where:
+1. $R_{\text{Delay}} = \min\left(100, \max\left(0, \frac{\text{Predicted Delay Months}}{36} \times 100\right)\right)$
+2. $R_{\text{Gap}} = \max\left(0, \min\left(100, \frac{\text{Expenditure \%} - \text{Physical Progress \%}}{30} \times 100\right)\right)$
+3. $R_{\text{BudgetPressure}} = \max\left(0, \min\left(100, \frac{\text{Expenditure \%} - 75}{25} \times 100\right)\right)$
 
-## 📊 Risk Scoring
+### Risk Classifications:
+- **Low**: $0 \le \text{Score} < 30$
+- **Medium**: $30 \le \text{Score} < 50$
+- **High**: $50 \le \text{Score} < 70$
+- **Critical**: $70 \le \text{Score} \le 100$
 
-NirmaanAI combines ML predictions with current project indicators to generate an operational risk score.
+---
 
-| Risk Score | Risk Level |
-|---|---|
-| 0 – <30 | Low |
-| 30 – <50 | Medium |
-| 50 – <70 | High |
-| 70 – 100 | Critical |
+## 🚀 Local Development Setup
 
-## 🖥️ Key Features
+### Prerequisites
+- Node.js `20.x` or later
+- Python `3.13.x`
+- `pnpm` or `npm`
 
-- **Command Center** — Centralized project monitoring dashboard
-- **Priority Queue** — Identifies projects requiring immediate attention
-- **Risk Map** — Geographic visualization of project risk
-- **Project Overview** — Detailed project-level metrics
-- **AI Risk Analysis** — ML-based delay and risk analysis
-- **Intervention Management** — Create and track corrective actions
-- **Project Management** — Add and search infrastructure projects
-- **Firebase Integration** — Data storage and authentication infrastructure
+### 1. Clone Repository
+```bash
+git clone https://github.com/harshalisalve24-dev/NirmaanAI.git
+cd NirmaanAI
+```
 
-## 🏗️ Technology Stack
+### 2. Frontend Setup
+```bash
+pnpm install
+pnpm dev
+```
+The frontend Vite server will launch at `http://localhost:5173` (or `http://localhost:8443`).
 
-**Frontend**
-- React
-- TypeScript
-- Vite
-- Tailwind CSS
-- Recharts
+### 3. Backend Setup
+```bash
+cd backend
+python -m venv venv
+# On Windows:
+.\venv\Scripts\activate
+# On macOS/Linux:
+source venv/bin/activate
 
-**Backend**
-- Python
-- FastAPI
-- Scikit-learn
-- Pandas
-- NumPy
-- Joblib
+pip install -r requirements.txt
+python -m uvicorn main:app --reload --port 8000
+```
+The FastAPI backend server will start at `http://localhost:8000`. Test interactive docs at `http://localhost:8000/docs`.
 
-**Database & Authentication**
-- Firebase
-- Cloud Firestore
-- Firebase Authentication
+---
 
-**Machine Learning**
-- Random Forest Regression
-- Feature Engineering
-- Cross-Validation
-- Leakage-Aware Model Evaluation
+## 🔗 Environment Variables Configuration
 
-## 🔄 System Workflow
+Create a `.env.local` file in the root directory:
 
-```text
-Project Data
-     ↓
-Data Cleaning & EDA
-     ↓
-Feature Engineering
-     ↓
-Machine Learning Model
-     ↓
-Expected Delay Prediction
-     ↓
-Risk Scoring
-     ↓
-Risk Prioritization
-     ↓
-AI Risk Analysis
-     ↓
-Early Warning
-     ↓
-Intervention
-     ↓
-Continuous Monitoring
+```env
+# Firebase Web App Config
+VITE_FIREBASE_API_KEY=your_api_key
+VITE_FIREBASE_AUTH_DOMAIN=your_project_id.firebaseapp.com
+VITE_FIREBASE_PROJECT_ID=your_project_id
+VITE_FIREBASE_STORAGE_BUCKET=your_project_id.firebasestorage.app
+VITE_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
+VITE_FIREBASE_APP_ID=your_app_id
+VITE_FIREBASE_MEASUREMENT_ID=your_measurement_id
+
+# Render Backend API URL
+VITE_API_BASE_URL=https://nirmaanai-backend.onrender.com
+```
+
+---
+
+## 📄 License & Attribution
+
+Developed for **Ministry of Road Transport & Highways (MoRTH)** & Government Infrastructure Monitoring. All rights reserved.
